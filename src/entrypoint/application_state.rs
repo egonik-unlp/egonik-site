@@ -1,8 +1,9 @@
 use crate::{
-    database::connection::DbPool, job_experience::repository::JobExperienceItemRepository,
+    database::connection::DbPool,
+    job_experience::repository::JobExperienceItemRepository,
     personal_information::repository::PersonalInformationRepository,
     portfolio::repository::PortfolioItemsRepository,
-    publications::repository::PublicationsRepository,
+    publications::{repository::PublicationsRepository, service::PublicationsService},
 };
 
 #[derive(Debug, Clone)]
@@ -10,7 +11,7 @@ pub struct AppState {
     pub job_experience_repository: JobExperienceItemRepository,
     pub personal_information_repository: PersonalInformationRepository,
     pub portfolio_items_repository: PortfolioItemsRepository,
-    pub publications_repository: PublicationsRepository,
+    pub publications_service: PublicationsService,
 }
 
 impl AppState {
@@ -18,12 +19,12 @@ impl AppState {
         let personal_information_repository = PersonalInformationRepository::new(pool.clone());
         let job_experience_repository = JobExperienceItemRepository::new(pool.clone());
         let portfolio_items_repository = PortfolioItemsRepository::new(pool.clone());
-        let publications_repository = PublicationsRepository::new(pool);
+        let publications_service = PublicationsService::new(PublicationsRepository::new(pool));
         Self {
             personal_information_repository,
             job_experience_repository,
             portfolio_items_repository,
-            publications_repository,
+            publications_service,
         }
     }
 }
