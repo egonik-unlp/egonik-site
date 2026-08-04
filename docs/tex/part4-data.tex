@@ -1,0 +1,613 @@
+% ===========================================================================
+\part{Data}
+% ===========================================================================
+
+\chapter{The data model, as it is and as it should be}
+\label{ch:datamodel}
+
+\section{What the four migrations built}
+
+Figure~\ref{fig:er-now} is the schema currently in the database, read back from Postgres rather
+than from the migration files, so it reflects what actually exists.
+
+\begin{diagram}{The current schema. The three relationships are all modelled as one-to-many with
+the foreign key on the child; two of the three should not be. Every foreign-key column carries its
+own sequence (see \S\ref{sec:serialfk}).}{fig:er-now}
+\begin{tikzpicture}[node distance=8mm]
+  \node[ent,minimum width=42mm] (pi) {\textbf{personal\_informations}\nodepart{two}
+    \scriptsize id \textsc{pk}\\\scriptsize name, surname\\\scriptsize image\_url\\\scriptsize birth\_date};
+  \node[ent,minimum width=42mm,right=22mm of pi] (ci) {\textbf{contact\_informations}\nodepart{two}
+    \scriptsize id \textsc{pk}\\\scriptsize personal\_information\_id \textsc{fk}\\\scriptsize github, email\\\scriptsize instagram, linked\_in};
+  \draw[flow] (pi) -- node[lbl,above]{1} node[lbl,below]{N} (ci);
+
+  \node[ent,minimum width=42mm,below=13mm of pi] (je) {\textbf{job\_experiences}\nodepart{two}
+    \scriptsize id \textsc{pk}\\\scriptsize date\_from, date\_to\\\scriptsize job\_title\\\scriptsize accomplishments\\\scriptsize responsabilities};
+  \node[ent,minimum width=42mm,right=22mm of je] (ji) {\textbf{job\_institutions}\nodepart{two}
+    \scriptsize id \textsc{pk}\\\scriptsize job\_experience\_id \textsc{fk}\\\scriptsize name\\\scriptsize url};
+  \draw[flow] (je) -- node[lbl,above]{1} node[lbl,below]{N} (ji);
+
+  \node[ent,minimum width=42mm,below=13mm of je] (po) {\textbf{portfolio\_items}\nodepart{two}
+    \scriptsize id \textsc{pk}\\\scriptsize title \textsc{unique}\\\scriptsize description\\\scriptsize public\\\scriptsize public\_url};
+  \node[ent,minimum width=42mm,right=22mm of po] (tg) {\textbf{tags}\nodepart{two}
+    \scriptsize id \textsc{pk}\\\scriptsize portfolio\_item\_id \textsc{fk}\\\scriptsize value};
+  \draw[flow] (po) -- node[lbl,above]{1} node[lbl,below]{N} (tg);
+
+  \node[ent,minimum width=42mm,below=13mm of po] (pu) {\textbf{publication\_items}\nodepart{two}
+    \scriptsize id \textsc{pk}\\\scriptsize title, journal\\\scriptsize abs\\\scriptsize year\\\scriptsize link};
+  \node[tag,right=22mm of pu,align=left,text width=40mm] {no relationships\\--- correctly so, for now};
+\end{tikzpicture}
+\end{diagram}
+
+The structure is sound in outline: four content types, each with the fields a personal site
+actually needs. What follows is not a rejection of it. It is the set of decisions that are cheap to
+change now, while every table is empty, and expensive to change once there is content and a
+deployed site.
+
+\section{Three modelling decisions to revisit}
+
+\subsection{\code{contact\_informations} is one-to-one pretending to be one-to-many}
+
+There is one of you. There will be one row in \code{personal\_informations} and one row in
+\code{contact\_informations}. The schema permits four contact rows for the same person, and
+nothing stops it, so every query that reads contact details has to decide what to do about the
+possibility --- \code{get\_result} will error on multiple rows, \code{get\_results} forces the
+caller to handle a \code{Vec} that should always have length one.
+
+There is also a second, quieter problem: the columns are the platforms. \code{github},
+\code{email}, \code{instagram}, \code{linked\_in}. Adding Mastodon means a migration, a schema
+regeneration, a model change, a DTO change and a component change. Removing Instagram means the
+same in reverse, or a dead column forever.
+
+\begin{pattern}[Make contact links rows, not columns]
+\begin{lstlisting}[style=sql]
+CREATE TABLE contact_links (
+  id          integer GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  person_id   integer NOT NULL REFERENCES people(id) ON DELETE CASCADE,
+  kind        text    NOT NULL,           -- 'github' | 'email' | 'linkedin' | ...
+  label       text    NOT NULL,           -- what to show: "@egonik"
+  url         text    NOT NULL,
+  position    integer NOT NULL DEFAULT 0, -- display order
+  UNIQUE (person_id, kind)
+);
+CREATE INDEX contact_links_person_idx ON contact_links (person_id, position);
+\end{lstlisting}
+Now a new platform is one \code{INSERT}. The component iterates rows and renders an icon chosen
+from \code{kind}, and adding a platform never touches Rust.
+\end{pattern}
+
+For the person table itself, if there is genuinely only ever one row, say so in the schema rather
+than hoping:
+
+\begin{lstlisting}[style=sql]
+-- a singleton table: exactly one row, enforced
+CREATE TABLE people (
+  id         integer PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
+  ...
+  CONSTRAINT people_singleton CHECK (id = 1)
+);
+\end{lstlisting}
+
+\subsection{\code{job\_institutions} points the wrong way}
+
+This is the one worth changing before there is data, because the fix touches a foreign key.
+
+As modelled, one \code{job\_experience} has many \code{job\_institutions}, and each institution
+belongs to exactly one experience. Read that as a sentence about the world: \emph{one job was held
+at several companies, and each company hosted exactly one job.} That is backwards. A job is held at
+one institution, and an institution can host several jobs --- which is what happens the second time
+you are promoted, or return to a former employer.
+
+The practical consequence is duplication. Work at Snappler twice and you get two
+\code{job\_institutions} rows both named ``Snappler'', both with the same URL, and no way to know
+they are the same organisation. Fix the URL and you fix it once, in one of two places.
+
+\begin{pattern}[Institutions are their own entity]
+\begin{lstlisting}[style=sql]
+CREATE TABLE institutions (
+  id   integer GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  name text NOT NULL UNIQUE,
+  url  text
+);
+
+ALTER TABLE job_experiences
+  ADD COLUMN institution_id integer NOT NULL REFERENCES institutions(id) ON DELETE RESTRICT;
+CREATE INDEX job_experiences_institution_idx ON job_experiences (institution_id);
+\end{lstlisting}
+\code{ON DELETE RESTRICT} rather than \code{CASCADE}: deleting an institution should not silently
+delete your employment history. The right answer is to refuse.
+\end{pattern}
+
+\subsection{\code{tags} should be many-to-many}
+
+\code{tags(id, portfolio\_item\_id, value)} stores the tag \emph{text} once per item. Tag three
+projects with ``rust'' and the string ``rust'' exists three times. Consequences: no canonical list
+of tags to render a filter UI from, no way to rename a tag in one place, and typos
+(``leptos''/``Leptos'') that silently become two different tags.
+
+\begin{pattern}[The standard join-table shape]
+\begin{lstlisting}[style=sql]
+CREATE TABLE tags (
+  id    integer GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  slug  text NOT NULL UNIQUE,             -- 'rust'      -- for URLs
+  label text NOT NULL                     -- 'Rust'      -- for display
+);
+
+CREATE TABLE portfolio_item_tags (
+  portfolio_item_id integer NOT NULL REFERENCES portfolio_items(id) ON DELETE CASCADE,
+  tag_id            integer NOT NULL REFERENCES tags(id)            ON DELETE CASCADE,
+  PRIMARY KEY (portfolio_item_id, tag_id)
+);
+CREATE INDEX portfolio_item_tags_tag_idx ON portfolio_item_tags (tag_id);
+\end{lstlisting}
+The composite primary key makes duplicate tagging impossible, and the extra index makes
+``all projects tagged rust'' fast in the other direction. Diesel handles this shape well ---
+\code{belonging\_to} plus a grouped load, which is the standard pattern in its guides.
+\end{pattern}
+
+\section{Column-level corrections}
+
+\begin{table}[htbp]
+\centering
+\caption{Column changes worth making while the tables are empty.}
+\label{tab:columns}
+\small
+\begin{tabular}{@{}L{0.30\textwidth}L{0.30\textwidth}L{0.34\textwidth}@{}}
+\toprule
+\textbf{Now} & \textbf{Should be} & \textbf{Why} \\
+\midrule
+\code{responsabilities} & \code{responsibilities} & Misspelling. It is about to become a column
+name, a struct field, a JSON key and part of a public API. Free to fix today. \dnum{15} \\
+\code{abs} \code{TEXT} & \code{abstract\_text} & \code{abs} reads as the SQL \code{ABS()} function.
+Not reserved, so it works --- but nobody will guess what it holds. \dnum{15} \\
+\code{accomplishments VARCHAR(255)} & child table, or \code{TEXT} & 255 characters is one sentence.
+Accomplishments are a list. A \code{job\_highlights} child table with \code{(kind, position, body)}
+lets you render bullets. \dnum{16} \\
+\code{responsabilities VARCHAR(255)} & same & As above. \\
+\code{public BOOLEAN} & \code{visibility} enum, or keep & Two-state today, three tomorrow
+(draft / unlisted / public). An enum type or a \code{text} + \code{CHECK} avoids a second boolean. \\
+\code{year INTEGER} & keep & Correct. A publication year is a year, not a date. \\
+--- & \code{slug TEXT NOT NULL UNIQUE} & On every content table. You want
+\code{/portfolio/egonik-site}, not \code{/portfolio/7}. Adding this later means either breaking
+URLs or maintaining both. \\
+--- & \code{position INTEGER NOT NULL DEFAULT 0} & Every list on the site has an order you care
+about, and it is never ``by primary key''. \\
+--- & \code{created\_at}, \code{updated\_at} \code{TIMESTAMPTZ} & Cheap now, impossible to
+backfill later. Diesel's initial-setup migration already installed
+\code{diesel\_manage\_updated\_at()} for exactly this and it is unused. \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{pattern}[Use \code{GENERATED ALWAYS AS IDENTITY}, not \code{SERIAL}]
+Every table currently uses \code{SERIAL} for its primary key, which is the older mechanism:
+\code{SERIAL} is shorthand for ``integer, plus a sequence, plus a default'', and the sequence is
+only loosely attached to the column. Identity columns are the SQL-standard replacement, are owned
+properly by the column, and --- crucially for the next section --- cannot be applied by accident to
+a column that should not have a default.
+\end{pattern}
+
+\section{The \code{SERIAL} foreign key, which is a live bug}
+\label{sec:serialfk}
+
+All three foreign-key columns are declared \code{SERIAL}:
+
+\begin{lstlisting}[style=sql,caption={From the three \file{up.sql} files.}]
+portfolio_item_id       serial not null,   -- tags
+job_experience_id       serial,            -- job_institutions
+personal_information_id serial not null,   -- contact_informations
+\end{lstlisting}
+
+The intent was ``an integer that references another table''. What \code{SERIAL} actually does is
+create a \emph{dedicated sequence for this column} and set it as the column default. The
+consequence is that a foreign key that should always be supplied explicitly instead has a default
+value that counts up on its own, entirely independently of the parent table.
+
+\begin{verified}[Verified: the real column definitions in the live database]
+\begin{lstlisting}[style=out]
+$ psql -d my-site -c '\d tags'
+      Column       |  Type   | Nullable |                     Default
+-------------------+---------+----------+-------------------------------------------------
+ id                | integer | not null | nextval('tags_id_seq'::regclass)
+ portfolio_item_id | integer | not null | nextval('tags_portfolio_item_id_seq'::regclass)
+ value             | varchar |          |
+\end{lstlisting}
+There is a \code{tags\_portfolio\_item\_id\_seq}. A sequence, on a foreign key.
+\end{verified}
+
+That is not merely untidy. It converts a mistake that Postgres would have caught into silent
+data corruption:
+
+\begin{verified}[Verified: silent mis-attachment, then a confusing error]
+\begin{lstlisting}[style=out]
+INSERT INTO portfolio_items (title, description, public) VALUES ('Project A','desc',true);
+INSERT INTO portfolio_items (title, description, public) VALUES ('Project B','desc',true);
+
+-- the author forgets the foreign key. There is a DEFAULT, so this SUCCEEDS:
+INSERT INTO tags (value) VALUES ('rust');      -- INSERT 0 1
+INSERT INTO tags (value) VALUES ('leptos');    -- INSERT 0 1
+
+SELECT t.value, p.title AS silently_attached_to FROM tags t
+  JOIN portfolio_items p ON p.id = t.portfolio_item_id;
+
+  value  | silently_attached_to
+ --------+----------------------
+  rust   | Project A                <-- wrong, and no error was raised
+  leptos | Project B                <-- wrong
+
+INSERT INTO tags (value) VALUES ('this-one-explodes');
+ERROR:  insert or update on table "tags" violates foreign key constraint
+DETAIL:  Key (portfolio_item_id)=(3) is not present in table "portfolio_items".
+\end{lstlisting}
+\end{verified}
+
+Read that sequence of events carefully, because it is the worst shape a bug can have. The first two
+inserts are wrong and succeed. The third fails --- with an error that points at the foreign key,
+which is where you will look, but the actual cause is a default on a column three lines up in a
+migration written two days earlier. Had the column been a plain \code{integer NOT NULL}, the very
+first insert would have failed immediately with \code{null value in column "portfolio\_item\_id"
+violates not-null constraint}, which is a message that leads directly to the mistake.
+
+This is defect \dnum{1}, and it is the highest-priority item in this document. The fix is
+mechanical:
+
+\begin{lstlisting}[style=sql,caption={A migration that removes the three stray defaults and drops the sequences.}]
+ALTER TABLE tags                 ALTER COLUMN portfolio_item_id       DROP DEFAULT;
+ALTER TABLE job_institutions     ALTER COLUMN job_experience_id       DROP DEFAULT;
+ALTER TABLE contact_informations ALTER COLUMN personal_information_id DROP DEFAULT;
+
+DROP SEQUENCE IF EXISTS tags_portfolio_item_id_seq;
+DROP SEQUENCE IF EXISTS job_institutions_job_experience_id_seq;
+DROP SEQUENCE IF EXISTS contact_informations_personal_information_id_seq;
+
+-- job_institutions.job_experience_id is also nullable, which it should not be
+ALTER TABLE job_institutions ALTER COLUMN job_experience_id SET NOT NULL;
+\end{lstlisting}
+
+Because all four tables are empty, the honest alternative is better: rewrite the four
+\file{up.sql} files correctly, drop the database, and re-run from scratch.
+Section~\ref{sec:rewrite} explains when that is legitimate.
+
+\section{Missing constraints and indexes}
+
+Postgres will enforce whatever you tell it to and nothing more. The current schema tells it very
+little. This checklist is worth running against every future migration.
+
+\begin{table}[htbp]
+\centering
+\caption{Constraint checklist, with the current state of each item.}
+\label{tab:constraints}
+\small
+\begin{tabular}{@{}L{0.30\textwidth}cL{0.52\textwidth}@{}}
+\toprule
+\textbf{Constraint} & \textbf{Now} & \textbf{Why it earns its place} \\
+\midrule
+Index on every FK column & \textcolor{crimson}{none} & Postgres indexes the \emph{referenced} key
+automatically but never the referencing column. Be honest about the reason: at a few dozen rows
+Postgres will seq-scan whichever way you index it, and should. The argument is that
+\code{ON DELETE CASCADE} takes row locks on the child scan, and that the index costs nothing. \\
+\code{ON DELETE} on every FK & \textcolor{crimson}{none} & The default is \code{NO ACTION}, so
+deleting a portfolio item with tags fails with a foreign-key error. Decide deliberately:
+\code{CASCADE} for tags, \code{RESTRICT} for institutions. \\
+\code{CHECK (date\_to IS NULL OR date\_to >= date\_from)} & \textcolor{crimson}{no} & A job that
+ended before it began will render as a negative duration. One line prevents it forever. \\
+\code{CHECK (year BETWEEN 1900 AND 2100)} & \textcolor{crimson}{no} & Catches a typo'd year at
+insert time rather than in a rendered page. \\
+\code{UNIQUE} on \code{slug} & n/a & Once slugs exist, this is what makes a URL a key. \\
+\code{NOT NULL} where meant & partial & \code{job\_institutions.job\_experience\_id} is nullable ---
+an institution attached to no job. Almost certainly unintended. \\
+\code{title UNIQUE} on \code{portfolio\_items} & \textcolor{moss}{yes} & Already there. Good ---
+though once slugs exist, the slug is the better uniqueness key and the title constraint can relax. \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\section{The target schema, decided}
+\label{sec:targetschema}
+
+The sections above argue for individual changes in isolation, which is how you evaluate them and a
+bad way to apply them. Here is the whole thing decided at once, so that M0 in
+Chapter~\ref{ch:roadmap} is a single coherent migration rather than a dozen negotiations.
+
+\begin{diagram}{The target schema. Every relationship has an explicit cardinality and referential
+action; every content table has a \code{slug}, a \code{position} and timestamps. Compare with
+Figure~\ref{fig:er-now}.}{fig:er-target}
+\begin{tikzpicture}[node distance=7mm]
+  % --- person cluster ---
+  \node[ent,minimum width=40mm] (pr) {\textbf{profile}\nodepart{two}
+    \scriptsize id \textsc{pk} \textsc{check} $=1$\\\scriptsize name, surname\\\scriptsize image\_url, birth\_date\\\scriptsize created\_at, updated\_at};
+  \node[ent,minimum width=40mm,right=20mm of pr] (cl) {\textbf{contact\_links}\nodepart{two}
+    \scriptsize id \textsc{pk}\\\scriptsize profile\_id \textsc{fk} \textsc{cascade}\\\scriptsize kind, label, url\\\scriptsize position\\\scriptsize \textsc{unique}(profile\_id, kind)};
+  \draw[flow] (pr) -- node[lbl,above]{1} node[lbl,below]{N} (cl);
+
+  % --- experience cluster ---
+  \node[ent,minimum width=40mm,below=11mm of pr] (inst) {\textbf{institutions}\nodepart{two}
+    \scriptsize id \textsc{pk}\\\scriptsize name \textsc{unique}\\\scriptsize url};
+  \node[ent,minimum width=40mm,right=20mm of inst] (je) {\textbf{job\_experiences}\nodepart{two}
+    \scriptsize id \textsc{pk}\\\scriptsize institution\_id \textsc{fk} \textsc{restrict}\\\scriptsize job\_title\\\scriptsize date\_from, date\_to?\\\scriptsize \textsc{check} to $\geq$ from};
+  \node[ent,minimum width=40mm,right=20mm of je] (jh) {\textbf{job\_highlights}\nodepart{two}
+    \scriptsize id \textsc{pk}\\\scriptsize job\_experience\_id \textsc{fk} \textsc{cascade}\\\scriptsize kind, position\\\scriptsize body \textsc{text}};
+  \draw[flow] (inst) -- node[lbl,above]{1} node[lbl,below]{N} (je);
+  \draw[flow] (je) -- node[lbl,above]{1} node[lbl,below]{N} (jh);
+
+  % --- portfolio cluster ---
+  \node[ent,minimum width=40mm,below=11mm of inst] (po) {\textbf{portfolio\_items}\nodepart{two}
+    \scriptsize id \textsc{pk}\\\scriptsize slug \textsc{unique}\\\scriptsize title, summary\\\scriptsize description \textsc{text}\\\scriptsize is\_published\\\scriptsize live\_url?, repo\_url?};
+  \node[ent,minimum width=40mm,right=20mm of po] (pit) {\textbf{portfolio\_item\_tags}\nodepart{two}
+    \scriptsize portfolio\_item\_id \textsc{fk}\\\scriptsize tag\_id \textsc{fk}\\\scriptsize \textsc{pk}(both) \textsc{cascade}};
+  \node[ent,minimum width=40mm,right=20mm of pit] (tg) {\textbf{tags}\nodepart{two}
+    \scriptsize id \textsc{pk}\\\scriptsize slug \textsc{unique}\\\scriptsize label};
+  \draw[flow] (po) -- node[lbl,above]{1} node[lbl,below]{N} (pit);
+  \draw[flow] (tg) -- node[lbl,above]{1} node[lbl,below]{N} (pit);
+  \node[lbl,below=1mm of pit] {effectively M:N};
+
+  % --- publications ---
+  \node[ent,minimum width=40mm,below=11mm of po] (pu) {\textbf{publications}\nodepart{two}
+    \scriptsize id \textsc{pk}\\\scriptsize slug \textsc{unique}\\\scriptsize title, journal\\\scriptsize abstract\_text \textsc{text}\\\scriptsize year \textsc{check}, doi?, url};
+  \node[tag,right=20mm of pu,align=left,text width=52mm] {standalone. Add an \code{authors} child
+    table only when a publication has co-authors you want to link.};
+
+  \node[tag,below=8mm of pu,align=left,text width=100mm] {\emph{Every table also carries}
+    \code{created\_at TIMESTAMPTZ NOT NULL DEFAULT now()} \emph{and} \code{updated\_at}, \emph{and
+    every primary key is} \code{GENERATED ALWAYS AS IDENTITY}. \emph{Every FK column has an index.}};
+\end{tikzpicture}
+\end{diagram}
+
+Five renames are folded in, and each is here because the current name is either wrong or ambiguous:
+
+\begin{itemize}
+  \item \code{personal\_informations} $\rightarrow$ \code{profile}. The old name is ungrammatical
+    (``informations'') and plural for a table that holds one row.
+  \item \code{contact\_informations} $\rightarrow$ \code{contact\_links}, restructured from columns
+    to rows.
+  \item \code{publication\_items} $\rightarrow$ \code{publications}. The \code{\_item} suffix carries
+    no information; \code{portfolio\_items} keeps it because a portfolio \emph{is} a collection of
+    items.
+  \item \code{abs} $\rightarrow$ \code{abstract\_text}; \code{responsabilities} $\rightarrow$ a
+    \code{kind} value in \code{job\_highlights}.
+  \item \code{public} / \code{public\_url} $\rightarrow$ \code{is\_published} / \code{live\_url}.
+    Those two columns share a prefix and mean unrelated things --- one is a visibility flag, the
+    other is a hyperlink --- and the shared prefix invites exactly the wrong mental model.
+\end{itemize}
+
+\begin{pattern}[Get here in one migration, not twelve]
+Because every table is empty (Chapter~\ref{ch:state}), this is not a migration sequence --- it is a
+rewrite of the four existing \file{up.sql} files plus \code{diesel database reset}. Do not write
+twelve \code{ALTER TABLE} migrations to reach a schema that has never held a row.
+\S\ref{sec:rewrite} sets out when that shortcut is legitimate, and why the door closes the day you
+deploy.
+\end{pattern}
+
+% ===========================================================================
+\chapter{Migration discipline}
+\label{ch:migrations}
+
+\section{The rule}
+
+\begin{keyidea}
+A migration is not ``the SQL that got the schema into the state I wanted''. It is a \emph{pair} of
+scripts, and the pair is only correct when \code{up} followed by \code{down} returns the database
+to exactly where it started. If \code{down} does not work, you do not have a migration --- you have
+a one-way change with a file next to it.
+\end{keyidea}
+
+Right now \code{down} does not work. Not for one migration --- for three of the four, and in a way
+that makes the whole chain unrevertible.
+
+\section{Verified: the chain cannot be rolled back}
+
+\begin{verified}[Verified on a scratch database]
+A fresh database was created, all migrations applied cleanly, and then reverted one at a time:
+\begin{lstlisting}[style=out]
+$ diesel migration run
+Running migration 2026-08-02-211314-0000_create_portfolio_item
+Running migration 2026-08-03-231439-0000_create_publications_item
+Running migration 2026-08-03-232042-0000_create_job_experience
+Running migration 2026-08-03-233332-0000_create_personal_information
+
+$ diesel migration revert
+Rolling back migration 2026-08-03-233332-0000_create_personal_information
+ERROR diesel::database: Failed to execute query
+  query="drop table personal_informations;\ndrop table contact_informations;\n"
+  err=DatabaseError(Unknown,
+      "cannot drop table personal_informations because other objects depend on it")
+Failed to run migrations: Failed to run 2026-08-03-233332-0000_create_personal_information
+  with: cannot drop table personal_informations because other objects depend on it
+\end{lstlisting}
+Running it four more times produces the identical error. The chain is stuck at the top: because the
+most recent migration cannot be reverted, \emph{none} of the earlier ones can be reached.
+\end{verified}
+
+\subsection{Cause 1: drops in the wrong order}
+
+\begin{lstlisting}[style=sql,caption={\file{2026-08-03-233332-0000\_create\_personal\_information/down.sql}}]
+drop table personal_informations;      -- <-- the PARENT, dropped first
+drop table contact_informations;       -- <-- the CHILD, which still references it
+\end{lstlisting}
+
+\code{contact\_informations} holds a foreign key into \code{personal\_informations}, so the parent
+cannot be dropped while the child exists. \code{DROP} order must be the reverse of \code{CREATE}
+order: children first, parents last. The \code{create\_job\_experience} migration has the identical
+bug. Interestingly, \code{create\_portfolio\_item} gets it right --- \code{DROP table tags} before
+\code{DROP TABLE portfolio\_items} --- which shows the correct order was understood once and then
+lost. Defect \dnum{3}.
+
+\subsection{Cause 2: a typo'd table name}
+
+\begin{lstlisting}[style=sql,caption={\file{2026-08-03-231439-0000\_create\_publications\_item/down.sql}}]
+drop table publication_itens
+\end{lstlisting}
+
+\begin{verified}
+\begin{lstlisting}[style=out]
+$ psql -d scratch -f migrations/..._create_publications_item/down.sql
+ERROR:  table "publication_itens" does not exist
+\end{lstlisting}
+\end{verified}
+
+\code{itens} is the Portuguese plural of \emph{item}; the table is \code{publication\_items}. A
+one-character slip that makes the migration unrevertible, and that no amount of testing the
+\code{up} direction would ever surface. Defect \dnum{4}.
+
+\subsection{The corrected files}
+
+\begin{lstlisting}[style=sql,caption={All three \file{down.sql} files, fixed. \code{IF EXISTS} makes a
+partially-applied revert re-runnable.}]
+-- create_publications_item/down.sql
+DROP TABLE IF EXISTS publication_items;
+
+-- create_job_experience/down.sql
+DROP TABLE IF EXISTS job_institutions;      -- child first
+DROP TABLE IF EXISTS job_experiences;       -- then parent
+
+-- create_personal_information/down.sql
+DROP TABLE IF EXISTS contact_informations;  -- child first
+DROP TABLE IF EXISTS personal_informations; -- then parent
+\end{lstlisting}
+
+\section{The habit that would have caught all of this}
+
+\begin{pattern}[Never write a migration without running \code{redo}]
+\code{diesel migration redo} reverts the most recent migration and immediately re-applies it. It is
+one command, it takes a second, and it exercises the \code{down} path that you will otherwise
+discover is broken on the day you actually need it.
+\begin{lstlisting}[style=sh]
+diesel migration generate create_thing     # writes up.sql and down.sql
+$EDITOR migrations/*_create_thing/{up,down}.sql
+diesel migration run                       # apply
+diesel migration redo                      # <-- the step that was skipped
+diesel print-schema > src/schema.rs        # regenerate, then commit both together
+\end{lstlisting}
+Make the \code{redo} step non-negotiable. Every defect in this chapter would have been caught by it
+within seconds of being written.
+\end{pattern}
+
+\begin{pitfall}[\code{redo} on a migration whose \code{down} is broken leaves you stuck]
+Diesel runs each migration in a transaction, so a failed revert rolls back and the database is
+unharmed. But the migration stays applied and \code{revert} will keep failing, so you cannot reach
+any earlier migration until you fix the \code{down.sql}. That is the state this repository is in
+right now.
+\end{pitfall}
+
+\section{When to rewrite history instead}
+\label{sec:rewrite}
+
+Normally, editing an already-applied migration is forbidden --- other people's databases and your
+production database have recorded that it ran, and changing it silently desynchronises them.
+
+That reasoning does not apply here, and it is worth saying so explicitly rather than following the
+rule out of habit. There is exactly one database, on your machine, with zero rows in every table,
+and one commit in the repository. Nothing has been deployed. Nobody else has cloned it.
+
+\begin{pattern}[Reset now; never again after the first deploy]
+\begin{lstlisting}[style=sh]
+# 1. fix all four up.sql (SERIAL -> integer on FKs, constraints, indexes,
+#    naming, created_at/updated_at) and all four down.sql (order, typo)
+# 2. throw the database away and rebuild it from the fixed migrations
+diesel database reset          # drop + create + run all migrations
+# 3. prove the pair is symmetric, for every migration, not just the last
+diesel migration redo -a       # -a = redo all
+# 4. regenerate the schema and commit migrations + schema.rs together
+diesel print-schema > src/schema.rs
+\end{lstlisting}
+After the site is deployed once, this door closes. From then on every schema change is a new
+migration, forward-only, and the \code{down} script exists for your development loop rather than
+for production rollback.
+\end{pattern}
+
+\begin{pitfall}[\code{schema.rs} is generated --- never hand-edit it]
+\file{src/schema.rs} carries the header
+\code{// @generated automatically by Diesel CLI}. It is the compiler's model of your tables, and
+if it drifts from the database you get type errors that describe a schema nobody has. Regenerate it
+after every migration, in the same commit as the migration, so that a single \code{git show}
+tells the whole story of a schema change.
+\end{pitfall}
+
+\section{Housekeeping in the migrations directory}
+
+Three small things, all defect-register entries:
+
+\begin{description}
+  \item[\file{migrations/.diesel\_lock} is untracked and unignored.] It is an ephemeral lock file
+    created while the CLI runs. Add it to \file{.gitignore}. \dnum{21}
+
+  \item[The timestamps carry a \code{-0000} suffix.] Diesel's own format is
+    \code{YYYY-MM-DD-HHMMSS\_name}; yours are \code{2026-08-02-211314-0000\_create\_portfolio\_item}.
+    Harmless --- ordering still works --- but let \code{diesel migration generate} name the
+    directories so they stay consistent. \dnum{22}
+
+  \item[Names should be plural and consistent.] \code{create\_portfolio\_item} creates
+    \code{portfolio\_items} \emph{and} \code{tags}; \code{create\_publications\_item} mixes plural
+    and singular in one name. Pick ``one migration named after what it creates'' and stick to it. \dnum{22}
+\end{description}
+
+% ===========================================================================
+\chapter{Content: seeding, and who writes it}
+\label{ch:seed}
+
+\section{Seed before you render}
+
+Every table is empty. That matters more than it sounds, because \textbf{an empty list and a broken
+query render identically}. If you build the publications page against an empty table you cannot
+tell whether it works, and the first time you insert a row you will be debugging the page and the
+query at once.
+
+\begin{pattern}[A seed migration, or a seed binary]
+Two reasonable mechanisms, and the choice depends on whether the content \emph{is} the data or
+merely stands in for it.
+
+\textbf{For real content --- your actual CV --- use an ordinary migration.} It is versioned,
+reviewed, applied identically everywhere, and rolls back with the schema. Your employment history
+changes about once a year; a migration per change is entirely proportionate.
+
+\textbf{For development fixtures --- ten fake portfolio items to test pagination --- use a small
+binary} at \file{src/bin/seed.rs}, run with \code{cargo run --bin seed --features ssr}. Keep it out
+of the migration chain so it never runs in production, and make it idempotent so you can run it
+twice.
+\end{pattern}
+
+\begin{lstlisting}[style=sql,caption={A seed migration, with explicit foreign keys --- which
+is what defect \dnum{1} currently lets you forget.}]
+INSERT INTO people (id, name, surname, image_url, birth_date)
+VALUES (1, 'Eduardo', 'Gonik', '/assets/me.jpg', '1990-01-01');
+
+INSERT INTO contact_links (person_id, kind, label, url, position) VALUES
+  (1, 'github',   '@egonik',        'https://github.com/egonik',            0),
+  (1, 'email',    'ia@snappler.com','mailto:ia@snappler.com',               1),
+  (1, 'linkedin', 'Eduardo Gonik',  'https://linkedin.com/in/...',          2);
+\end{lstlisting}
+
+\section{The authoring question you have not answered yet}
+
+There is a decision waiting here that is easy to defer past the point where it is cheap. Every
+repository in the codebase is read-only: \code{get\_all} and \code{get\_by\_id}. So how does content
+get in?
+
+Three answers, in increasing order of cost:
+
+\begin{description}
+  \item[SQL migrations, forever.] Content lives in the repository as SQL. Deploying is how you
+    publish. No admin UI, no authentication, no attack surface. For a personal site updated a few
+    times a year this is not a compromise --- it is arguably the correct answer, and it is what a
+    static-site generator would give you with more machinery.
+
+  \item[Markdown files in the repository, read at startup.] Content lives in
+    \file{content/*.md} and is loaded into the database (or straight into memory) on boot. You get
+    to write prose in an editor instead of inside a SQL string literal, and Postgres holds only
+    what benefits from being queryable. A good fit if the site grows a blog.
+
+  \item[An admin UI behind authentication.] Now you need write repositories, \code{Action}s and
+    \code{<ActionForm>}s, session management, password hashing, CSRF considerations, and a
+    permanent obligation to keep all of it patched. Worth it only if you will genuinely edit
+    content from a phone.
+\end{description}
+
+\begin{pattern}[Choose the first, and revisit only when it hurts]
+Start with SQL migrations. The reason is not laziness --- it is that server functions are public
+HTTP endpoints. The moment a write path exists, it exists for everyone on the internet unless every
+one of those functions checks authorisation on every call. That is a real, ongoing obligation, and
+it is a strange one to take on for a site whose content changes annually.
+
+The decision that matters is not which of the three you pick today. It is that you pick
+\emph{deliberately}, and that if you defer, you defer knowing you have deferred --- rather than
+discovering in six months that there is no way to add a project without hand-writing SQL.
+\end{pattern}

@@ -1,0 +1,590 @@
+% ===========================================================================
+\part{The plan}
+% ===========================================================================
+
+\chapter{The defect register}
+\label{ch:register}
+
+\section{How to read it}
+
+Two tables. The first lists \textbf{defects} --- things that are wrong in code or schema that
+already exists. The second lists \textbf{gaps} --- things that are absent. The distinction matters
+for sequencing: a defect gets more expensive the longer it stays, because code accumulates around
+it; a gap costs nothing until you need it.
+
+Severities mean something specific here:
+
+\begin{description}
+  \item[\severity{blocker}] Either it breaks a command you will run this week, or it will corrupt
+    data, or it prevents the next piece of work from being written at all.
+  \item[\severity{high}] It will cost meaningfully more to fix later than now, usually because the
+    fix touches a foreign key, a wire format, or something with content already in it.
+  \item[\severity{medium}] Real, worth fixing, no deadline.
+  \item[\severity{low}] Housekeeping. Fix it while you are in the file.
+\end{description}
+
+Everything in both tables was confirmed by reading the code, compiling it, or running it against
+the live database.
+
+\section{Defects}
+
+\begingroup
+\small
+\setlength{\LTleft}{0pt}\setlength{\LTright}{0pt}
+\begin{longtable}{@{}p{0.035\textwidth}p{0.095\textwidth}L{0.375\textwidth}L{0.40\textwidth}@{}}
+\caption{Defects: things that are wrong today.}\label{tab:defects}\\
+\toprule
+\textbf{\#} & \textbf{Sev.} & \textbf{What is wrong} & \textbf{Fix} \\
+\midrule
+\endfirsthead
+\multicolumn{4}{@{}l}{\footnotesize\itshape Table~\ref{tab:defects} continued}\\
+\toprule
+\textbf{\#} & \textbf{Sev.} & \textbf{What is wrong} & \textbf{Fix} \\
+\midrule
+\endhead
+\bottomrule
+\endlastfoot
+
+\dnum{1} & \severity{blocker} & All three foreign-key columns are declared \code{SERIAL}, so each
+has its own sequence and a \code{DEFAULT nextval(...)}. An insert that omits the FK silently
+attaches the child to an arbitrary parent, then later fails intermittently. Verified against the
+live database. & Declare them \code{INTEGER NOT NULL REFERENCES ...}. Drop the three stray
+sequences. \S\ref{sec:serialfk} \\
+
+\dnum{38} & \severity{blocker} & \code{get\_connection\_pool()} is called \emph{inside} the
+\code{HttpServer::new} factory, which runs once per worker. Verified: 12 workers on this machine
+$\times$ r2d2's default \code{max\_size} of 10 = \textbf{120 connections} against a Postgres whose
+\code{max\_connections} is 100. Will not fail in development. & Build the pool and \code{AppState}
+above \code{HttpServer::new}; clone the state into each worker. \S\ref{sec:appstate} \\
+
+\dnum{3} & \severity{blocker} & Two \file{down.sql} files drop the parent table before the child, so
+the foreign key blocks it. \code{diesel migration revert} fails and the whole chain becomes
+unrevertible. Verified. & Reverse the order: children first. \S\ref{ch:migrations} \\
+
+\dnum{4} & \severity{blocker} & \file{create\_publications\_item/down.sql} drops
+\code{publication\_itens} --- a typo. Verified: \code{ERROR: table "publication\_itens" does not
+exist}. & \code{DROP TABLE IF EXISTS publication\_items;} \\
+
+\dnum{5} & \severity{blocker} & \file{lib.rs} gates all four subject modules on \code{ssr}, so no
+\code{\#[server]} function or component inside them can exist in the browser build. This now
+affects real code: both \file{publications/components.rs} and the new
+\file{publications/server.rs} are invisible to the wasm build. & Move the gate down to
+\file{model.rs} and \file{repository.rs}. Ch.~\ref{ch:layers} \\
+
+\dnum{6} & \severity{blocker} & \code{serde} is \code{optional = true} and enabled only by
+\code{ssr}, while every model derives \code{Serialize}. Verified: the browser build fails with
+\code{error[E0432]: unresolved import serde}. & Make \code{serde} unconditional.
+Ch.~\ref{ch:boundary} \\
+
+\dnum{14} & \severity{high} & \file{.env} points at database \code{my-site};
+\file{docker-compose.yml} creates \code{mydatabase}. A fresh clone connects to an empty database. &
+Rename both to \code{egonik\_site} (no hyphen). \S\ref{ch:deploy} \\
+
+\dnum{7} & \severity{high} & \code{JobExperienceItem}, \code{JobInstitution},
+\code{PersonalInformation} and \code{ContactInformation} have all-private fields;
+\code{PortfolioItem} and \code{PublicationItem} do not. Nothing outside the module can read them. &
+Add \code{pub} to every field, consistently. \S\ref{ch:dto} \\
+
+\dnum{8} & \severity{high} & \code{Repository<T>} takes \code{\&mut self} although
+\code{Pool::get} takes \code{\&self}, and its methods are synchronous. & \code{\&self}, plus
+\code{web::block} at the call site. Ch.~\ref{ch:blocking} \\
+
+\dnum{16} & \severity{high} & \code{accomplishments} and \code{responsabilities} are
+\code{VARCHAR(255)} single columns holding what are logically lists. & \code{TEXT}, or a
+\code{job\_highlights} child table with ordering. \\
+
+\dnum{23} & \severity{high} & No foreign key declares \code{ON DELETE}, so the default
+\code{NO ACTION} applies and deleting any parent row errors. & \code{ON DELETE CASCADE} for owned
+children, \code{RESTRICT} for institutions. \\
+
+\dnum{27} & \severity{high} & \code{contact\_informations} is one-to-one in intent and one-to-many
+in the schema; nothing prevents four contact rows per person. & \code{UNIQUE (person\_id)}, or
+replace with a \code{contact\_links} table. \S\ref{ch:datamodel} \\
+
+\dnum{28} & \severity{high} & \code{job\_institutions} points the wrong way: an institution belongs
+to one experience, so an employer must be duplicated per role. & Promote \code{institutions} to its
+own table; \code{job\_experiences} holds the FK. \\
+
+\dnum{24} & \severity{medium} & No index on any FK column; Postgres indexes only the referenced
+side. Honest framing: at this data volume Postgres will sequentially scan regardless and should ---
+the argument is schema hygiene plus the row-locking cost of \code{ON DELETE CASCADE}, not page
+latency. & One \code{CREATE INDEX} per FK column. Free, so do it. \\
+
+\dnum{19} & \severity{medium} & \file{.env} is untracked but \emph{not} in \file{.gitignore} ---
+verified with \code{git check-ignore}. One \code{git add -A} commits it permanently. The exposure
+today is small (the credential is \code{postgres:postgres} on a container bound to
+\code{localhost}); the habit is what matters, and there is no \file{.env.example} for a fresh
+clone. & Add \file{.env} to \file{.gitignore}; commit a \file{.env.example}. \\
+
+\dnum{2} & \severity{medium} & \file{src/entrypoint/} held a \file{routes/} subtree the
+compiler never saw, because \file{mod.rs} was empty. Now restructured into \file{http.rs} and
+\file{application\_state.rs} --- both declared, both still empty. & Fill both, or remove them.
+\S\ref{sec:appstate} \\
+
+\dnum{9} & \severity{medium} & \code{dotenvy} and \code{anyhow} are unconditional dependencies and
+are compiled into the wasm bundle. Verified with \code{cargo tree}. \code{dotenvy} reads
+\file{.env} files --- in a browser. & Mark both \code{optional} and move them into the \code{ssr}
+feature. \\
+
+\dnum{11} & \severity{medium} & The portfolio, job-experience and personal-information repositories
+all report \code{"Can't get publication items from db"}. Copy-paste. & Typed errors per subject; the
+mistake then cannot be expressed. Ch.~\ref{ch:errors} \\
+
+\dnum{12} & \severity{medium} & \code{get\_connection\_pool} calls \code{dotenv()}, reads
+\code{env::var} and \code{.expect()}s, all inside a constructor. & Load config once in \code{main};
+pass values in; return \code{Result}. \S\ref{ch:composition} \\
+
+\dnum{13} & \severity{medium} & \file{Cargo.lock} is gitignored, though this crate produces a
+binary. Builds are not reproducible. & Remove the \file{.gitignore} line; commit the lockfile. \\
+
+\dnum{15} & \severity{medium} & \code{responsabilities} is misspelled; \code{abs} is opaque and
+shadows the SQL \code{ABS()} function name. Both are about to become permanent API surface. &
+\code{responsibilities}, \code{abstract\_text}. Free today. \\
+
+\dnum{25} & \severity{medium} & No \code{CHECK} constraints. A job can end before it began; a
+publication year can be 20260. & \code{CHECK (date\_to IS NULL OR date\_to >= date\_from)} and a
+year range. \\
+
+\dnum{26} & \severity{medium} & No table has \code{created\_at} / \code{updated\_at}, and the
+\code{diesel\_manage\_updated\_at()} helper that the initial migration installed is unused. & Add
+both columns now; they cannot be backfilled later. \\
+
+\dnum{29} & \severity{medium} & \code{tags} stores the tag text per item, so duplicates and
+near-duplicates are unavoidable and unlimited. & \code{tags} $+$ \code{portfolio\_item\_tags} join
+table with a composite PK. \\
+
+\dnum{33} & \severity{medium} & The new \code{Publications} component is \code{fn}, not
+\code{pub fn}, so no route can reach it. & Add \code{pub}. \\
+
+\dnum{10} & \severity{low} & \code{chrono} is compiled into the wasm bundle with default features,
+including the parts that want a system clock and timezone database. & Keep it unconditional (dates
+do cross the wire) but add \code{default-features = false, features = ["serde"]}. \\
+
+\dnum{17} & \severity{low} & \code{println!("listening on ...")} is inside the \code{HttpServer}
+factory, so it prints once per worker thread. & Move it above \code{HttpServer::new}, and use
+\code{tracing::info!}. \\
+
+\dnum{18} & \severity{low} & \code{Files::new("/assets", \&site\_root)} maps \code{/assets} onto the
+entire site root, not the assets directory. Inherited from the template. &
+\code{Files::new("/assets", format!("\{site\_root\}/assets"))}. \\
+
+\dnum{20} & \severity{low} & The \code{csr} \emph{binary} target does not compile:
+\code{leptos::mount\_to\_body} moved in 0.8. Verified --- \code{error[E0425]}. The lib target
+compiles. & Delete the \code{csr} feature and the two dead \code{main} functions. \\
+
+\dnum{30} & \severity{low} & \file{README.md}, \file{LICENSE} and \file{.gitignore} are still the
+\code{leptos-rs/start-actix} template's; \file{Cargo.toml} has no description, authors, or
+repository. & Rewrite the README as how to run \emph{this} site. \\
+
+\dnum{32} & \severity{low} & Every migration uses \code{CREATE TABLE IF NOT EXISTS}, which turns a
+schema conflict into silent divergence instead of an error. & Drop \code{IF NOT EXISTS} from
+\code{CREATE}; keep \code{IF EXISTS} on \code{DROP}. \\
+
+\dnum{21} & \severity{low} & \file{migrations/.diesel\_lock}, the \file{site} dump artefact and
+\file{dumpSkip.txt} are untracked and unignored. & Add all three to \file{.gitignore}. \\
+
+\dnum{22} & \severity{low} & Migration directory names carry a \code{-0000} suffix that Diesel does
+not generate, and mix singular and plural. & Let \code{diesel migration generate} name them. \\
+
+\dnum{31} & \severity{low} & Repositories import Diesel's internal method traits
+(\code{query\_dsl::methods::\{FilterDsl, SelectDsl\}}) rather than \code{diesel::prelude::*}. &
+\code{use diesel::prelude::*;} \\
+
+\dnum{34} & \severity{low} & \code{http = \{ version = "1.3.1", optional = true \}} is enabled by no
+feature and used by nothing. Verified: the only \code{http::} path in \file{src/} is
+\code{actix\_web::http::}. It compiles to nothing and implies a dependency you have not got. &
+Delete the line. \\
+
+\dnum{35} & \severity{low} & \code{serde\_json} is enabled by \code{ssr} and used nowhere in
+\file{src/}. Verified by \code{grep}. & Delete it until something needs it. \\
+
+\dnum{36} & \severity{low} & \code{wasm-bindgen} and \code{console\_error\_panic\_hook} are
+unconditional, so they are compiled into the \emph{native server} build as well --- the mirror image
+of \dnum{9}. & Move both into the \code{hydrate} feature. \\
+
+\dnum{37} & \severity{low} & \file{app.rs} declares both a \code{WildcardSegment} route \emph{and} a
+\code{Routes fallback}. The wildcard matches first, so the fallback string \code{"Not found."} is
+unreachable dead code that looks like the 404 handler. & Delete the fallback, or point it at
+\code{NotFound}. \\
+
+\end{longtable}
+\endgroup
+
+\section{Gaps}
+
+\begingroup
+\small
+\setlength{\LTleft}{0pt}\setlength{\LTright}{0pt}
+\begin{longtable}{@{}p{0.04\textwidth}L{0.40\textwidth}L{0.49\textwidth}@{}}
+\caption{Gaps: things that do not exist yet. The order is roughly the order to build them
+in.}\label{tab:gaps}\\
+\toprule
+\textbf{\#} & \textbf{What is missing} & \textbf{First concrete step} \\
+\midrule
+\endfirsthead
+\multicolumn{3}{@{}l}{\footnotesize\itshape Table~\ref{tab:gaps} continued}\\
+\toprule
+\textbf{\#} & \textbf{What is missing} & \textbf{First concrete step} \\
+\midrule
+\endhead
+\bottomrule
+\endlastfoot
+
+G1 & \textcolor{moss}{\textbf{Mostly done.}} \code{AppState} now holds the four repositories and
+is registered with \code{app\_data}. What remains is moving its construction out of the worker
+factory (\dnum{38}) and returning \code{Result} instead of panicking. & \S\ref{sec:appstate} \\
+
+G2 & \textcolor{amber}{\textbf{Started.}} \file{publications/server.rs} has a
+\code{\#[server] async fn get\_all\_publications() -> Result<(), ServerFnError>}. To become useful it
+needs: a \code{Vec<PublicationDto>} return type, \code{pub}, an ungated module (\dnum{5}), and a body
+that extracts \code{AppState} and calls the repository through \code{web::block}. & Ch.~\ref{ch:blocking},
+\S\ref{ch:composition} \\
+
+G3 & No page renders data. \file{app.rs} is the starter template's click counter; one real route. &
+\file{src/ui/} with a \code{Shell} and one page per route. Ch.~\ref{ch:pages} \\
+
+G4 & All seven tables are empty, and there is no seed mechanism. An empty list and a broken query
+look identical. & A seed migration with your real content. Ch.~\ref{ch:seed} \\
+
+G14 & No \code{slug} column anywhere, so detail URLs would have to be \code{/portfolio/7}. & Add
+\code{slug TEXT NOT NULL UNIQUE} in the same migration as \dnum{1}. \\
+
+G6 & No application error type and no \code{ErrorBoundary} anywhere, so a failed query renders as
+nothing. (The 404 path \emph{does} work --- verified. What is missing is the 500 case.) &
+\file{src/error.rs} with \code{AppError: FromServerFnError}. Ch.~\ref{ch:errors} \\
+
+G7 & No \code{Resource}, \code{Suspense} or \code{Transition}, and no decision about SSR mode per
+route. & The read pattern in Ch.~\ref{ch:loading}; pick \code{SsrMode} per route. \\
+
+G8 & Tailwind is not set up; \file{style/main.scss} is three lines of Sass. & Four steps, no Node
+required. Ch.~\ref{ch:tailwind} \\
+
+G5 & No write operations anywhere: no \code{Insertable}, no \code{New*} struct, no
+\code{insert\_into}. No authoring path, and no decision about whether there should be one. & Decide
+between SQL migrations, Markdown files, or an authenticated admin. \S\ref{ch:seed} \\
+
+G9 & No logging, no health endpoint, no graceful shutdown. One \code{println!}. &
+\code{tracing} $+$ \code{tracing-actix-web}, \code{/healthz}, \code{shutdown\_timeout}.
+Ch.~\ref{ch:ops} \\
+
+G10 & No tests at all. The Playwright spec is the untouched starter example and its dependencies
+are not installed. & One repository integration test; three Playwright specs.
+Ch.~\ref{ch:testing} \\
+
+G11 & No CI, no \file{rust-toolchain.toml}, no fmt/clippy gate. & The five-check workflow in
+\S\ref{ch:deploy}. \\
+
+G12 & No \file{Dockerfile}, no app service in Compose, no deployment story. & Two-stage build;
+remember \code{libpq5}. Ch.~\ref{ch:deploy} \\
+
+G13 & No SEO metadata beyond the template \code{<Title text="Welcome to Leptos"/>}: no description,
+no Open Graph, no \file{robots.txt}, no sitemap. & Per-page \code{<Title>} and \code{<Meta>};
+\file{robots.txt} in \file{assets/}. \\
+
+\end{longtable}
+\endgroup
+
+\begin{pitfall}[One defect that is not in the table]
+\file{src/app.rs} still sets \code{<Title text="Welcome to Leptos"/>}. It is trivial and it is also
+the single most visible unfinished thing about the site --- it is what appears in a browser tab and
+in search results. Worth thirty seconds before anything else in this document.
+\end{pitfall}
+
+% ===========================================================================
+\chapter{The roadmap}
+\label{ch:roadmap}
+
+\section{The sequencing argument}
+
+The temptation is to start with the visible part, because the visible part is what feels like
+progress. Resist it in one specific way: \textbf{repair the foundation first}, because four of the
+five blockers are things that make the next piece of work either impossible or wrong.
+
+\begin{diagram}{Milestone dependencies. M0 unblocks everything; M1 is the one that proves the
+system works end to end. M4 through M6 are genuinely independent of each other.}{fig:roadmap}
+\begin{tikzpicture}[node distance=6mm]
+  \node[srv,minimum width=36mm] (m0) {\textbf{M0} --- repair\\[1pt]\scriptsize schema, gates, secrets};
+  \node[shared,minimum width=36mm,right=10mm of m0] (m1) {\textbf{M1} --- one slice\\[1pt]\scriptsize
+    publications: DB $\rightarrow$ screen};
+  \node[shared,minimum width=36mm,right=10mm of m1] (m2) {\textbf{M2} --- the rest\\[1pt]\scriptsize
+    3 more slices $+$ layout};
+  \node[cli,minimum width=36mm,right=10mm of m2] (m3) {\textbf{M3} --- polish\\[1pt]\scriptsize
+    errors, 404, loading};
+
+  \node[box,fill=wash,minimum width=32mm,below=11mm of m1] (m4) {\textbf{M4} --- Tailwind};
+  \node[box,fill=wash,minimum width=32mm,below=11mm of m2] (m5) {\textbf{M5} --- ship\\[1pt]\scriptsize
+    tracing, Docker, CI};
+  \node[box,fill=wash,minimum width=32mm,below=11mm of m3] (m6) {\textbf{M6} --- optional\\[1pt]\scriptsize
+    writes, SEO, tests};
+
+  \draw[flowa] (m0) -- (m1);
+  \draw[flowa] (m1) -- (m2);
+  \draw[flow] (m2) -- (m3);
+  \draw[flow] (m1.south) -- (m4.north);
+  \draw[flow] (m1.south east) -- (m5.north west);
+  \draw[flow] (m3.south) -- (m6.north);
+\end{tikzpicture}
+\end{diagram}
+
+\section{M0 --- Repair the foundation}
+
+Everything here is a defect, not a feature, and all of it is cheap \emph{today} because every table
+is empty and there is one commit.
+
+\begin{runbook}[M0, in order]
+\begin{enumerate}
+  \item \textbf{Secrets and hygiene first} (five minutes, and irreversible if you skip it):
+    \file{.env}, \file{migrations/.diesel\_lock}, \file{site} and \file{dumpSkip.txt} into
+    \file{.gitignore}; remove \file{Cargo.lock} from it and commit the lockfile. \dnum{19} \dnum{21} \dnum{13}
+  \item \textbf{Rewrite the four migrations to reach the schema in
+    Figure~\ref{fig:er-target}} --- one coherent target, not twelve negotiations. That single change
+    covers \dnum{1} \dnum{3} \dnum{4} \dnum{15} \dnum{16} \dnum{23} \dnum{24} \dnum{25} \dnum{26}
+    \dnum{27} \dnum{28} \dnum{29} \dnum{32} and G14.
+  \item \textbf{Rename the database} to \code{egonik\_site} in both \file{.env} and
+    \file{docker-compose.yml}, then \code{diesel database reset} and \code{diesel migration redo -a}.
+    \dnum{14}
+  \item \textbf{Regenerate} \file{src/schema.rs} and commit it with the migrations.
+  \item \textbf{Fix the dependency table} (Table~\ref{tab:deps}): \code{serde} unconditional;
+    \code{dotenvy} and \code{anyhow} \code{ssr}-only; \code{chrono} with
+    \code{default-features = false}; \code{wasm-bindgen} and \code{console\_error\_panic\_hook} into
+    \code{hydrate}; delete \code{http} and \code{serde\_json}; delete the \code{csr} feature and
+    the two dead \code{main} functions. \dnum{6} \dnum{9} \dnum{10} \dnum{20} \dnum{34} \dnum{35} \dnum{36}
+  \item \textbf{Move the module gates down} from \file{lib.rs} into each
+    \file{<subject>/mod.rs}. \dnum{5}
+  \item \textbf{Resolve \file{src/entrypoint/}}: put \code{AppState} in
+    \file{application\_state.rs} (\S\ref{sec:appstate}) and the Actix wiring in \file{http.rs}, or
+    remove both. Do not leave them empty and declared. \dnum{2}
+  \item \textbf{Delete the dead \code{Routes} fallback} in \file{app.rs}. \dnum{37}
+  \item \textbf{Make model fields \code{pub}}, and \code{Publications} \code{pub}. \dnum{7} \dnum{33}
+  \item \textbf{Change \code{Repository} to \code{\&self}} --- or delete the trait now, since
+    Ch.~\ref{ch:blocking} argues it should not survive. \dnum{8}
+  \item \textbf{Fix the title.} \code{<Title text="Eduardo Gonik"/>}.
+\end{enumerate}
+\end{runbook}
+
+\textbf{Done when:} \code{diesel migration redo -a} succeeds; both \code{cargo check} invocations
+from Ch.~\ref{ch:twobuilds} pass; \code{git status} shows no \file{.env}.
+
+\section{M1 --- One slice, all the way through}
+
+\begin{keyidea}
+Take \emph{one} subject --- publications, because it is the only table with no children --- and
+carry it from Postgres to the rendered page. Do not start the other three until this one works.
+\end{keyidea}
+
+\begin{why}
+Everything you are about to learn the hard way lives in this one slice: the gate, the DTO, the
+\code{From} impl, the server function, the pool extraction, \code{web::block}, the resource, the
+suspense boundary. Discovering all of that once, on the simplest table, is much cheaper than
+discovering it four times in parallel --- and once it works, the other three slices are
+transcription rather than design.
+\end{why}
+
+\begin{runbook}[M1, in order]
+\begin{enumerate}
+  \item Seed real content: three publications, via a migration. G4
+  \item Move the pool and \code{AppState} construction \emph{above} \code{HttpServer::new}.
+    \dnum{38} G1
+  \item \file{publications/dto.rs}: \code{PublicationDto}, ungated.
+  \item \file{publications/model.rs}: drop the serde derives; add \code{From<PublicationItem>}.
+  \item \file{publications/repository.rs}: \code{list()} taking \code{\&self}, wrapped in
+    \code{web::block}, ordered newest-first.
+  \item \file{publications/api.rs}: \code{\#[server] list\_publications()}. G2
+  \item \file{publications/components.rs}: grow the placeholder into the
+    \code{Resource}/\code{Transition} pattern. G7
+  \item Route it at \code{/publications}. G3
+\end{enumerate}
+\end{runbook}
+
+\textbf{Done when:} \code{curl localhost:3000/publications} returns HTML \emph{containing the
+seeded titles} --- not an empty shell that fills in later. That is the test that proves server
+rendering, not just hydration, is working.
+
+\section{M2 --- The remaining slices, and the shell}
+
+Now repetition, plus the one genuinely new problem: the other three subjects all have child tables.
+
+\begin{itemize}
+  \item \file{src/ui/layout.rs}: \code{Shell} with header, nav, \code{<Outlet/>}, footer. Convert
+    \file{app.rs} to the nested-route form. Ch.~\ref{ch:pages}
+  \item \code{portfolio} with its tags, \code{job\_experience} with its institution,
+    \code{personal\_information} with its contact links --- each needs an \emph{aggregate} DTO
+    (\code{PortfolioItemDto} containing \code{Vec<TagDto>}), assembled in the repository with
+    Diesel's \code{belonging\_to} plus \code{grouped\_by}, not with a query per row.
+  \item \code{/portfolio/:slug} detail page, which is where the 404 path gets exercised for real.
+\end{itemize}
+
+\textbf{Done when:} every route in Table~\ref{tab:routes} renders seeded content, and
+\code{/portfolio/nonexistent} returns HTTP 404 --- checked with \code{curl -i}, because a browser
+will show you the page either way.
+
+\section{M3 --- Errors, states, and edges}
+
+\begin{itemize}
+  \item \file{src/error.rs} with \code{AppError} implementing \code{FromServerFnError}; migrate the
+    server functions off bare \code{ServerFnError}. G6
+  \item \code{ErrorBoundary} on every page; one shared skeleton component with fixed heights so
+    loading does not shift the layout.
+  \item A real 404 page instead of the string \code{"Not found."}.
+  \item Decide \code{SsrMode} per route. For a content site where crawlers matter,
+    \code{SsrMode::Async} on the content routes ships complete HTML rather than a streamed shell.
+\end{itemize}
+
+\section{M4 --- Tailwind and the actual design}
+
+Chapter~\ref{ch:tailwind} is the mechanism; this milestone is the part that is not engineering.
+Do it \emph{after} M2, deliberately: styling a page whose content is real is a different and much
+better experience than styling a page full of placeholder text, because the line lengths, the
+heading lengths and the awkward cases are all in front of you.
+
+\section{M5 --- Make it shippable}
+
+\code{tracing} and \code{tracing-actix-web}; \code{/healthz}; \code{shutdown\_timeout};
+embedded migrations; the two-stage \file{Dockerfile}; the app service in Compose; the five-check
+CI workflow; \file{rust-toolchain.toml}. G9 G11 G12
+
+\textbf{Done when:} \code{docker compose up} on a clean machine serves the site with content.
+
+\section{M6 --- Whatever is actually next}
+
+Independent, and to be picked up when each one starts to matter rather than on a schedule: the
+authoring decision (G5), SEO and social previews (G13), the test suite (G10), a tags page, a blog,
+an RSS feed. This is the milestone that never finishes, which is correct for a personal site.
+
+% ===========================================================================
+\chapter{Conventions and runbooks}
+\label{ch:conventions}
+
+\section{Naming}
+
+Small decisions, made once, that stop the codebase from reading like four different projects.
+
+\begin{table}[htbp]
+\centering
+\caption{Naming conventions to adopt.}
+\label{tab:naming}
+\small
+\begin{tabular}{@{}L{0.24\textwidth}L{0.31\textwidth}L{0.36\textwidth}@{}}
+\toprule
+\textbf{Thing} & \textbf{Convention} & \textbf{Example} \\
+\midrule
+table & plural, \code{snake\_case} & \code{portfolio\_items} \\
+FK column & singular parent $+$ \code{\_id} & \code{portfolio\_item\_id} \\
+join table & both tables, alphabetical & \code{portfolio\_item\_tags} \\
+index & \code{<table>\_<cols>\_idx} & \code{tags\_portfolio\_item\_idx} \\
+Diesel model & singular, matches the row & \code{PortfolioItem} \\
+DTO & model name $+$ \code{Dto} & \code{PortfolioItemDto} \\
+server fn, read & \code{list\_*} / \code{get\_*} & \code{list\_portfolio}, \code{get\_portfolio\_item} \\
+server fn, write & verb first & \code{create\_portfolio\_item} \\
+component & \code{PascalCase}, and \code{pub} & \code{PortfolioCard} \\
+migration & \code{create\_*} / \code{add\_*} / \code{fix\_*} & \code{add\_slug\_to\_portfolio\_items} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Two specific points, because the current code does both ways:
+
+\begin{itemize}
+  \item \textbf{No abbreviations in schema columns.} \code{abs} saved five characters and costs
+    every future reader a lookup.
+  \item \textbf{Repository names should share one shape.} Today there are three:
+    \code{PublicationsRepository}, \code{PortfolioItemsRepository},
+    \code{JobExperienceItemRepository}. Pick \code{<Subject>Repository} and rename the other two.
+\end{itemize}
+
+\section{The language decision, which is urgent}
+
+This one deserves its own section because it is about to become expensive, and because the codebase
+has already started answering it two ways at once.
+
+Every identifier, comment and column in the repository is in English. The one component written so
+far renders Spanish:
+
+\begin{lstlisting}[style=rs]
+view! { <p> "Aca van las publicaciones" </p> }
+\end{lstlisting}
+
+Those are two \emph{different} decisions wearing the same clothes, and they should be separated
+explicitly:
+
+\begin{description}
+  \item[The code's language.] English, and it already is --- with two slips
+    (\code{responsabilities}, \code{publication\_itens}) that are the visible cost of drifting.
+    Every dependency, every error message and every piece of documentation you will read is in
+    English; matching it is the path of least friction.
+
+  \item[The site's language.] Entirely your call, and it has no bearing on the first decision. A
+    Spanish site with an English codebase is completely normal.
+\end{description}
+
+\begin{pattern}[Decide monolingual or bilingual before writing the DTOs]
+This is the part that is urgent. If the site will ever be bilingual, it changes the schema and the
+router, not just the strings:
+
+\begin{itemize}
+  \item the schema needs per-locale text --- either a \code{locale} column plus a composite key on
+    every content table, or a \code{<table>\_translations} child table;
+  \item the DTOs need to carry the resolved locale, or the server function needs a locale argument;
+  \item the router needs a locale segment (\code{/es/portfolio}) or the decision to negotiate from
+    the \code{Accept-Language} header;
+  \item every URL slug needs a per-locale variant if you want \code{/es/portafolio}.
+\end{itemize}
+
+Retrofitting that after four subjects exist means touching every table, every DTO and every route.
+Deciding it now costs one sentence. \textbf{The recommendation is monolingual} --- pick the language
+your readers use and write the site in it --- because a bilingual personal site doubles the
+authoring work forever, and the authoring work is the thing that actually determines whether a
+personal site stays current.
+\end{pattern}
+
+\section{Runbook: adding a new content type}
+
+The whole flow, so the next subject takes an hour rather than an afternoon of rediscovery.
+
+\begin{runbook}[Adding a content type, nine steps]
+\begin{enumerate}
+  \item \code{diesel migration generate create\_talks}
+  \item Write \file{up.sql}: \code{id} as \code{GENERATED ALWAYS AS IDENTITY},
+    \code{slug TEXT NOT NULL UNIQUE}, the content columns, \code{position},
+    \code{created\_at}/\code{updated\_at}, every FK as \code{INTEGER NOT NULL REFERENCES ... ON
+    DELETE ...}, an index per FK, the \code{CHECK} constraints.
+  \item Write \file{down.sql}: children first, \code{DROP TABLE IF EXISTS}.
+  \item \code{diesel migration run \&\& diesel migration redo} --- \emph{never skip the redo}.
+  \item \code{diesel print-schema > src/schema.rs}
+  \item \file{src/talks/}: \file{mod.rs} with the gates, \file{dto.rs} (ungated),
+    \file{model.rs} (\code{ssr}, with the \code{From} impl), \file{repository.rs} (\code{ssr},
+    \code{\&self}, \code{web::block}), \file{api.rs} (ungated \code{\#[server]}),
+    \file{components.rs} (ungated, \code{pub}).
+  \item \code{pub mod talks;} in \file{lib.rs} --- \emph{ungated}.
+  \item Add the route in \file{app.rs}; add a nav link in \file{ui/layout.rs}.
+  \item Seed a row, then run both \code{cargo check} invocations and \code{curl} the route.
+\end{enumerate}
+\end{runbook}
+
+\section{Checklist before every commit}
+
+\begin{lstlisting}[style=sh]
+cargo fmt --all
+cargo clippy --no-default-features --features ssr -- -D warnings
+cargo check --no-default-features --features ssr
+cargo check --lib --no-default-features --features hydrate --target wasm32-unknown-unknown
+# if migrations changed:
+diesel migration redo -a && diesel print-schema | diff -u src/schema.rs -
+git status            # is .env still untracked AND ignored?
+\end{lstlisting}
+
+\section{Five rules that summarise the whole document}
+
+If everything else here is forgotten, these are the ones that pay for themselves.
+
+\begin{enumerate}
+  \item \textbf{Two programs, one source tree.} Every type is in the server, the browser, or both,
+    and you say which. Check both builds before every commit.
+  \item \textbf{Two structs per content type.} The row struct is Diesel's and stays on the server.
+    The DTO is the wire's and goes everywhere. \code{From} converts.
+  \item \textbf{Never block the async runtime.} Every Diesel call goes through
+    \code{web::block}, with \code{pool.get()} inside the closure.
+  \item \textbf{A migration is a reversible pair.} \code{diesel migration redo} after every one.
+  \item \textbf{A server function is a public endpoint.} Filter in the query, not in the component;
+    authorise in the body; leak nothing in the error.
+\end{enumerate}

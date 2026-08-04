@@ -1,0 +1,1266 @@
+% ===========================================================================
+\part{Architecture}
+% ===========================================================================
+
+\chapter{Layers, and the shape to grow into}
+\label{ch:layers}
+
+\section{The organising principle: vertical slices, horizontal gates}
+
+You already made a good structural decision without necessarily framing it as one. The code is
+organised by \emph{subject} --- \file{portfolio/}, \file{publications/},
+\file{job\_experience/}, \file{personal\_information/} --- rather than by \emph{technical kind}
+(a \file{models/} directory, a \file{repositories/} directory). That is the right instinct. Each
+subject is a vertical slice, and everything about publications lives in one place, so adding a
+field to a publication touches one directory.
+
+What is missing is the second axis. Within each slice, code needs to be separated by \emph{which
+of the two programs it belongs to}. Right now that separation happens at the top of
+\file{src/lib.rs}, at whole-module granularity, which is too coarse: it forces an entire subject to
+be server-only when only half of it needs to be.
+
+\begin{keyidea}
+Organise \emph{directories} by subject. Organise \emph{files within a directory} by which side of
+the boundary they live on. The \code{cfg} gates then sit on individual files in
+\file{<subject>/mod.rs}, not on whole subjects in \file{lib.rs}.
+\end{keyidea}
+
+\section{The target tree}
+
+Here is the layout to grow into. Compare it against the inventory in Chapter~\ref{ch:state}; most
+of it is a redistribution of files you already have.
+
+\begin{lstlisting}[style=tree,caption={The target module tree. \textcolor{rust}{\emph{ssr}} marks
+files compiled only into the server; everything else is compiled into both programs.}]
+src/
+  lib.rs                      # module roots. Gates live here only for genuinely server-only subjects.
+  main.rs                     # the composition root: config, pool, Actix. ssr only by construction.
+  app.rs                      # <App/>: the shell, <Routes>, global layout
+  error.rs                    # AppError: the one error type the browser is allowed to see
+
+  ui/                         # subject-AGNOSTIC presentation only
+    mod.rs
+    layout.rs                 #   header, nav, footer
+    components.rs             #   reusable pieces: Card, TagList, DateRange, ExternalLink
+    pages/                    #   one file per route; a page composes several subjects
+
+  portfolio/                  # a vertical slice
+    mod.rs                    #   declares the files below, and holds the cfg gates
+    dto.rs                    #   PortfolioItemDto, TagDto        -- crosses the wire
+    api.rs                    #   #[server] list_portfolio(), get_portfolio_item()
+    components.rs             #   <PortfolioList/>, <PortfolioCard/>  -- subject-specific
+    model.rs                  # ssr  Diesel structs: Queryable, Selectable
+    repository.rs             # ssr  the SQL
+  publications/               # same six files
+  job_experience/             # same six files
+  personal_information/       # same six files
+
+  schema.rs                   # ssr  diesel table! macros, generated -- never edit by hand
+  database/
+    mod.rs
+    connection.rs             # ssr  build the r2d2 pool from a config value (not from env)
+  config.rs                   # ssr  typed AppConfig, loaded once in main
+\end{lstlisting}
+
+Three things changed relative to today, and each one has a reason.
+
+\begin{description}
+  \item[\file{src/entrypoint/} narrowed to composition, not controllers.] The original
+    \file{routes/request/response} shape was reaching for a controller layer that this stack
+    generates for you: server functions \emph{are} the inbound adapter, and \file{api.rs} inside
+    each slice is where they live. Writing Actix handlers that return JSON for your own front end
+    duplicates \code{\#[server]} and loses type safety across the wire.
+
+    That subtree has since been deleted in favour of \file{http.rs} and
+    \file{application\_state.rs}, which is a much better use of the directory --- see
+    \S\ref{sec:appstate}. The remaining risk is only that two declared-but-empty modules are an
+    invitation; fill them or remove them, rather than leaving them indefinitely. Defect \dnum{2}.
+
+  \item[Each slice gained \file{dto.rs} and \file{api.rs}, and both are ungated.] This is the
+    single most important structural change in the document. Chapter~\ref{ch:dto} explains the
+    two-struct rule and Chapter~\ref{ch:composition} shows the wiring; the short version is that
+    a \code{\#[server]} function \emph{must} be visible to the browser build, so the module
+    holding it cannot be gated.
+
+  \item[\file{src/ui/} is new.] Components do not belong in \file{app.rs}. \file{app.rs} should
+    stay small enough to read in one screen: it is a table of contents for the site, not a place
+    where markup accumulates.
+\end{description}
+
+\begin{pitfall}[The gate that will bite you]
+\code{\#[cfg(feature = "ssr")] pub mod publications;} makes every server function inside
+\file{publications/} invisible to the browser build. The error is
+\code{error[E0433]: failed to resolve: could not find `publications` in the crate root}, and
+rustc helpfully adds \code{found an item that was configured out ... the item is gated behind the
+`ssr` feature}. The fix is never to un-gate the \emph{query} code --- it is to move the gate down
+one level, onto the files that actually contain Diesel. This is defect \dnum{5}.
+\end{pitfall}
+
+\begin{verified}[This is happening right now, in \file{src/publications/}]
+While this document was being written, a component appeared in the repository:
+
+\begin{lstlisting}[style=rs]
+// src/publications/mod.rs
+pub mod components;      // <-- new
+pub mod model;
+pub mod repository;
+
+// src/publications/components.rs
+use leptos::prelude::*;
+
+#[component]
+fn Publications() -> impl IntoView {
+    view! { <p> "Aca van las publicaciones" </p> }
+}
+\end{lstlisting}
+
+This is a good instinct --- keeping the component next to the data it renders --- and it has walked
+straight into the gate. Two things are wrong, and neither produces an error yet:
+
+\textbf{The component is in the server-only build.} \file{src/lib.rs} still says
+\code{\#[cfg(feature = "ssr")] pub mod publications;}, so \code{components.rs} is compiled into
+the server and \emph{not} into the wasm bundle. It compiles today only because nothing references
+it. The moment \file{app.rs} adds \code{<Publications/>}, the browser build fails with the
+\code{E0433} above. Moving the gate off \code{publications} and onto \code{model} and
+\code{repository} fixes it --- and that gate move is exactly the change in
+\file{<subject>/mod.rs} shown below.
+
+\textbf{The component is private.} \code{fn Publications()} has no \code{pub}, so even in the
+server build nothing outside \file{components.rs} can name it. Components that a route renders
+need to be \code{pub}.
+\end{verified}
+
+\begin{why}[Components in the slice, or in \file{ui/}?]
+Both are defensible, and the tree above shows only one of them. Co-locating a component with its
+data --- \file{publications/components.rs} --- keeps a feature in one directory and is easier to
+delete cleanly. A shared \file{ui/} directory keeps the pieces that are genuinely reusable
+(\code{Card}, \code{TagList}, \code{DateRange}) from being buried inside whichever subject
+happened to need them first.
+
+The split that works in practice: \textbf{subject-specific components live in the subject}
+(\file{publications/components.rs} renders publications and nothing else);
+\textbf{subject-agnostic components live in \file{ui/}}. Pages --- the things a route maps to ---
+go in \file{ui/pages/}, because a page usually composes more than one subject. The one hard rule is
+the gate: any file containing a component or a \code{\#[server]} function must be reachable in
+both builds.
+\end{why}
+
+\subsection{What \file{<subject>/mod.rs} looks like}
+
+\begin{lstlisting}[style=rs,caption={\file{src/publications/mod.rs} --- the gate lives here, per file. This
+is the change that unblocks the component already sitting in that directory.}]
+pub mod api;                                  // #[server] functions: BOTH programs
+pub mod components;                           // <Publications/>:     BOTH programs
+pub mod dto;                                  // wire types:          BOTH programs
+
+#[cfg(feature = "ssr")]
+pub mod model;                                // Diesel structs: server only
+#[cfg(feature = "ssr")]
+pub mod repository;                           // SQL:           server only
+\end{lstlisting}
+
+and correspondingly \file{src/lib.rs} loses four of its seven gates:
+
+\begin{lstlisting}[style=rs,caption={\file{src/lib.rs} --- only the genuinely server-only roots stay gated.}]
+pub mod app;
+pub mod error;
+pub mod ui;
+pub mod job_experience;                       // ungated: each holds DTOs, server fns, components
+pub mod personal_information;
+pub mod portfolio;
+pub mod publications;
+
+#[cfg(feature = "ssr")] pub mod config;
+#[cfg(feature = "ssr")] pub mod database;
+#[cfg(feature = "ssr")] pub mod schema;
+\end{lstlisting}
+
+An equivalent and equally idiomatic convention --- the one the upstream Leptos examples use --- is
+to keep a slice in a single file with an inner gated module:
+
+\begin{lstlisting}[style=rs,caption={The single-file variant, for slices small enough not to need four files.}]
+// src/publications/mod.rs
+use crate::error::AppError;
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PublicationDto { /* ... */ }
+
+#[cfg(feature = "ssr")]
+mod ssr {                                     // everything server-only, in one place
+    pub use crate::database::connection::DbPool;
+    pub use crate::schema::publication_items;
+    pub use diesel::prelude::*;
+}
+
+#[server]
+pub async fn list_publications() -> Result<Vec<PublicationDto>, AppError> {
+    #[cfg(feature = "ssr")]
+    use self::ssr::*;                         // the body is compiled only for ssr anyway
+    // ...
+}
+\end{lstlisting}
+
+Pick one convention and hold to it. Four files per slice is better once a slice has more than one
+query and more than one DTO, which all four of yours will.
+
+\section{Dependency direction}
+
+Layers are only useful if the arrows point one way. Figure~\ref{fig:layers} states the rule for
+this project.
+
+\begin{diagram}{Permitted dependency directions. Every arrow points \emph{down or inward}. The two
+crossings marked in red are the ones to watch for --- both are easy to write and both invert the
+architecture.}{fig:layers}
+\begin{tikzpicture}[node distance=5mm]
+  \node[cli,minimum width=64mm] (ui) {\textbf{\file{ui/}} --- pages and components\\[1pt]\scriptsize
+    knows DTOs and server-fn names. Knows nothing else.};
+  \node[shared,minimum width=64mm,below=6mm of ui] (api) {\textbf{\file{<subject>/api.rs}} --- server functions\\[1pt]\scriptsize
+    the inbound adapter: extract state, call the repository, map to DTO};
+  \node[shared,minimum width=64mm,below=6mm of api] (dto) {\textbf{\file{<subject>/dto.rs}} $+$ \file{error.rs}\\[1pt]\scriptsize
+    plain serde types. Depend on nothing in this project.};
+  \node[srv,minimum width=64mm,below=9mm of dto] (rep) {\textbf{\file{<subject>/repository.rs}}\\[1pt]\scriptsize
+    owns the pool and the SQL};
+  \node[srv,minimum width=64mm,below=6mm of rep] (mod) {\textbf{\file{<subject>/model.rs}} $+$ \file{schema.rs}\\[1pt]\scriptsize
+    Diesel's view of the tables};
+
+  \draw[flow] (ui) -- (api);
+  \draw[flow] (api) -- (dto);
+  \draw[flow] (api.east) -- ++(9mm,0) |- (rep.east);
+  \draw[flow] (rep) -- (mod);
+  \draw[flow] (rep.west) -- ++(-9mm,0) |- (dto.west);
+
+  % forbidden
+  \draw[-{Stealth[length=4pt]},line width=0.9pt,draw=crimson,dashed]
+    (mod.west) -- ++(-16mm,0) |- node[lbl,pos=0.75,left,align=right,text=crimson]{a Diesel model\\in a \code{view!}}(ui.west);
+  \draw[-{Stealth[length=4pt]},line width=0.9pt,draw=crimson,dashed]
+    (dto.east) -- ++(20mm,0) |- node[lbl,pos=0.72,right,align=left,text=crimson]{a DTO that\\imports \code{schema}}(mod.east);
+
+  \begin{scope}[on background layer]
+    \node[lane,fit=(ui)(dto),inner sep=3mm,label={[tag,anchor=north west]north west:compiled into both programs}] {};
+    \node[lane,fit=(rep)(mod),inner sep=3mm,label={[tag,anchor=south west]south west:server only}] {};
+  \end{scope}
+\end{tikzpicture}
+\end{diagram}
+
+The two red arrows are worth naming, because they are the two ways this design decays:
+
+\begin{enumerate}
+  \item \textbf{A Diesel model rendered directly in a \code{view!}.} It compiles, if you also
+    un-gate the model, and then \code{diesel} follows it into the wasm build and the build breaks
+    with errors about \code{mio} or missing \code{core} items. That failure mode is documented in
+    the Leptos book precisely because it is common; \code{diesel} with the \code{postgres} feature
+    links native \code{libpq}, which has no WebAssembly target.
+  \item \textbf{A DTO that reaches for \file{schema.rs}} --- usually because someone added
+    \code{\#[diesel(table\_name = ...)]} to the DTO to avoid writing a conversion. That drags the
+    schema into the shared layer and the boundary is gone.
+\end{enumerate}
+
+\section{One crate or a workspace?}
+
+Worth deciding now, because migrating later is tedious. Both shapes are supported by
+cargo-leptos.
+
+\begin{table}[htbp]
+\centering
+\caption{The two project shapes, judged for this project specifically.}
+\label{tab:shapes}
+\small
+\begin{tabular}{@{}L{0.14\textwidth}L{0.40\textwidth}L{0.40\textwidth}@{}}
+\toprule
+ & \textbf{Single crate (today)} & \textbf{Workspace: \code{shared} / \code{app} / \code{frontend} / \code{server}} \\
+\midrule
+Boundary enforced by & discipline plus \code{cfg} gates & the compiler --- \code{server} is never built for wasm \\
+Config & \code{[package.metadata.leptos]} & \code{[[workspace.metadata.leptos]]} with \code{bin-package} and \code{lib-package} \\
+Cost & one \code{Cargo.toml}; every gate is yours to get right & four manifests, and the shared crate \emph{still} needs \code{ssr}/\code{hydrate} gates \\
+Risk & a mis-gated module reaches wasm & \code{cargo build --workspace} unifies features and silently enables \code{ssr}+\code{hydrate} together \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{pattern}[Stay with one crate]
+For a personal website with four content types, the single-crate layout is the right call. The
+workspace's benefit is that it makes the boundary a compiler-enforced fact rather than a
+convention --- genuinely valuable at scale, and not worth four manifests here. The gates in
+\file{lib.rs} plus the two-build check from Chapter~\ref{ch:twobuilds} give you most of the safety
+for a fraction of the ceremony.
+
+Revisit this if either becomes true: the server grows logic you want to unit-test without
+compiling wasm at all, or the wasm bundle grows past roughly a megabyte and you need to audit what
+is in it.
+\end{pattern}
+
+\begin{pitfall}[If you ever do move to a workspace]
+Two traps, both silent. \code{[[workspace.metadata.leptos]]} is an \emph{array} of tables ---
+single brackets and cargo-leptos simply will not find the project. And profile sections
+(\code{[profile.wasm-release]}) are honoured only in the \emph{root} manifest; put them in a
+member and your \code{opt-level = 'z'} is ignored with a warning you will not read.
+\end{pitfall}
+
+% ===========================================================================
+\chapter{Domain models and DTOs: the two-struct rule}
+\label{ch:dto}
+
+\section{The rule}
+
+\begin{keyidea}
+For every content type, write two structs. One describes the \emph{table} and lives on the server.
+One describes the \emph{payload} and travels to the browser. Convert between them with
+\code{From}. Do not try to make one struct do both jobs.
+\end{keyidea}
+
+This will feel like duplication for about a week, and then it will start paying for itself. The
+reasons are not aesthetic.
+
+\begin{why}
+\textbf{They have different lifetimes.} The table struct changes when you run a migration; the
+payload changes when the page needs different information. Coupling them means every schema tweak
+is a wire-format change.
+
+\textbf{They have different derives, and the derives are mutually hostile.} The table struct needs
+\code{Queryable} and \code{Selectable} from Diesel, which do not exist in the browser build. The
+payload needs \code{Serialize} and \code{Deserialize} present in \emph{both} builds. One struct
+cannot satisfy both sets without \code{cfg\_attr} gymnastics that break in a way described below.
+
+\textbf{They have different obligations about truth.} The table struct mirrors the database
+exactly, including columns the page must never see. Your \code{portfolio\_items} table has a
+\code{public} boolean; the DTO for a public listing should not have that field at all, because a
+field that does not exist cannot be leaked by a careless \code{view!}.
+
+\textbf{The payload is a published API.} A server function is a public HTTP endpoint. Anyone can
+call it. The DTO is the contract you are publishing, and it deserves to be designed rather than
+inherited from whatever your table happens to look like.
+\end{why}
+
+\subsection{What it looks like}
+
+\begin{lstlisting}[style=rs,caption={\file{src/publications/dto.rs} --- ungated, no Diesel anywhere.}]
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PublicationDto {
+    pub id: i32,
+    pub title: String,
+    pub abstract_text: String,   // renamed: `abs` is a SQL function name and an unclear field name
+    pub year: i32,
+    pub journal: String,
+    pub link: String,
+}
+\end{lstlisting}
+
+\begin{lstlisting}[style=rs,caption={\file{src/publications/model.rs} --- server only, unchanged in spirit from today.}]
+use diesel::prelude::*;
+
+#[derive(Debug, Queryable, Selectable)]
+#[diesel(table_name = crate::schema::publication_items)]
+#[diesel(check_for_backend(diesel::pg::Pg))]
+pub struct PublicationItem {
+    pub id: i32,
+    pub title: String,
+    pub abstract_text: String,
+    pub year: i32,
+    pub journal: String,
+    pub link: String,
+}
+
+impl From<PublicationItem> for crate::publications::dto::PublicationDto {
+    fn from(row: PublicationItem) -> Self {
+        Self {
+            id: row.id,
+            title: row.title,
+            abstract_text: row.abstract_text,
+            year: row.year,
+            journal: row.journal,
+            link: row.link,
+        }
+    }
+}
+\end{lstlisting}
+
+Note that \code{Serialize} and \code{Deserialize} have left the model entirely. The model has no
+business being serialised --- it never crosses a network. That deletion is not cosmetic; it is what
+makes the boundary real.
+
+\begin{pattern}[Put the \code{From} impl next to the model]
+The conversion is a server-side concern and depends on the server-side type, so it belongs in
+\file{model.rs}, not \file{dto.rs}. Keeping it there means \file{dto.rs} imports nothing from your
+crate at all, which is exactly the property that guarantees it is safe for the browser.
+\end{pattern}
+
+\section{The mistake that looks like the fix}
+
+There is an obvious-seeming way to avoid writing two structs: keep one struct and gate the derives.
+
+\begin{antipattern}[Gating serde behind \code{cfg\_attr}]
+\begin{lstlisting}[style=rs]
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "ssr", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "ssr", derive(diesel::Queryable, diesel::Selectable))]
+pub struct PublicationItem { /* ... */ }
+\end{lstlisting}
+This is worse than the original problem, because it fails \emph{later} and more obscurely. The
+type now exists in the browser build but without its serde impls, so the failure moves from the
+type definition to every use site.
+\end{antipattern}
+
+The reported errors are worth showing, because recognising them saves an hour. Research for this
+document reproduced them against \code{leptos 0.8.20}: you get four \code{error[E0277]}s per DTO.
+Two come from the \code{\#[server]} macro:
+
+\begin{lstlisting}[style=out]
+error[E0277]: the trait bound `Dto: serde::Serialize` is not satisfied
+  = note: required for `JsonEncoding` to implement `Encodes<Vec<Dto>>`
+  = note: required for `Vec<Dto>` to implement
+          `IntoRes<Post<JsonEncoding>, BrowserMockRes, ServerFnError>`
+  = note: required by a bound in `leptos::server_fn::ServerFn::Protocol`
+\end{lstlisting}
+
+and two more come from \code{Resource::new} independently of the server function, anchored at
+\code{leptos\_server-0.8.7/src/resource.rs:1030}, where the bound is
+\code{JsonSerdeCodec: Encoder<T> + Decoder<T>}.
+
+\begin{pitfall}[Read the type names in the error]
+\code{BrowserMockRes}, \code{BrowserClient}, \code{BrowserMockServer}. Those names are the
+diagnostic. They tell you the bound is being checked \emph{in the client build}, which tells you
+the missing impl has to exist in the client build, which tells you the \code{cfg\_attr} is the
+bug. Whenever a confusing trait error mentions a \code{Browser*} type, ask what is missing on the
+client side.
+\end{pitfall}
+
+Only \emph{server-only} derives belong in \code{cfg\_attr}. If you ever do collapse a model and a
+DTO into one type --- reasonable for a slice that is a pure pass-through --- it looks like this,
+with serde unconditional:
+
+\begin{lstlisting}[style=rs]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]        // always
+#[cfg_attr(feature = "ssr", derive(diesel::Queryable, diesel::Selectable))]
+#[cfg_attr(feature = "ssr", diesel(table_name = crate::schema::publication_items))]
+#[cfg_attr(feature = "ssr", diesel(check_for_backend(diesel::pg::Pg)))]
+pub struct Publication { /* ... */ }
+\end{lstlisting}
+
+\section{Private fields, and why they are a problem now}
+
+Two of your four models declare their fields private:
+
+\begin{lstlisting}[style=rs,caption={\file{src/job\_experience/model.rs} --- no \code{pub} on any field.}]
+pub struct JobExperienceItem {
+    id: i32,
+    date_from: NaiveDate,
+    date_to: Option<NaiveDate>,
+    job_title: String,
+    accomplishments: String,
+    responsabilities: String,
+}
+\end{lstlisting}
+
+\code{PersonalInformation}, \code{ContactInformation} and \code{JobInstitution} are the same;
+\code{PortfolioItem}, \code{Tag} and \code{PublicationItem} correctly use \code{pub}. This
+compiles today only because nothing outside those modules reads the fields. The moment a
+\code{From} impl in another module, or a page in \file{ui/}, tries to read \code{job\_title}, you
+get \code{error[E0616]: field `job\_title` of struct `JobExperienceItem` is private}. This is
+defect \dnum{7}.
+
+Two acceptable resolutions, and the choice is a real design decision rather than a formality:
+
+\begin{itemize}
+  \item \textbf{Make the fields \code{pub}.} Correct for a row struct. A Diesel model is a
+    transparent record of what the database returned; it has no invariants to protect, and adding
+    getters for all six fields would be ceremony with no content. Do this.
+  \item \textbf{Keep them private and add a constructor plus accessors.} Correct only if the type
+    is a real domain aggregate that enforces invariants --- ``\code{date\_to} is either \code{None}
+    or on/after \code{date\_from}''. If you want that invariant enforced in Rust rather than only
+    by a database \code{CHECK} constraint, then the invariant-holding type is a \emph{third} type,
+    distinct from both the row and the DTO, and it deserves the privacy. That is a reasonable thing
+    to want later. It is not what these structs are today.
+\end{itemize}
+
+Whichever you choose, choose it consistently. Right now the codebase does both, and the difference
+is not deliberate --- it is which file was written on which evening. Consistency here is worth
+more than either option.
+
+% ===========================================================================
+\chapter{Repositories, blocking, and the pool}
+\label{ch:blocking}
+
+\section{Why \code{Repository<T>} should not survive}
+
+The current abstraction is four lines:
+
+\begin{lstlisting}[style=rs,caption={\file{src/core/mod.rs}, in full.}]
+pub trait Repository<T> {
+    fn get_all(&mut self) -> anyhow::Result<Vec<T>>;
+    fn get_by_id(&mut self, id: i32) -> anyhow::Result<T>;
+}
+\end{lstlisting}
+
+It is a familiar shape from other languages, and in Rust it has four problems. Taken one at a time,
+because only the last one is fatal:
+
+\subsection*{1. The generic parameter buys nothing}
+
+You cannot write \code{impl<T> Repository<T> for PgStore} and specialise it per entity ---
+coherence forbids overlapping impls, and specialisation is unstable. So every implementation is
+hand-written anyway, exactly as it is now: four structs, four impls, eight method bodies. The
+generic parameter adds a type parameter to every signature and returns nothing. A trait per subject
+with the methods that subject actually needs --- \code{PublicationRepository} with
+\code{list()}, \code{by\_id()}, \code{by\_year()} --- says more and costs less.
+
+\subsection*{2. Two methods is not an interface, it is a coincidence}
+
+\code{get\_all} and \code{get\_by\_id} happen to be what all four subjects need \emph{today},
+because you have not written any interesting queries yet. The first time you want
+``publications grouped by year, newest first'' or ``portfolio items with their tags'', it will not
+fit, and it will go somewhere else --- an inherent method on the struct, next to the trait impl.
+Then the trait describes half of each repository and you have to read both to know what a
+repository can do.
+
+\subsection*{3. \code{\&mut self} is a misattribution, and it is contagious}
+
+This one is worth being precise about, because the reasoning that produces it is so plausible.
+Diesel query methods take \code{\&mut conn}. So a repository method needs a mutable connection. So
+--- it seems to follow --- the repository must be \code{\&mut self}. It does not follow. The
+\code{\&mut} belongs to the \emph{connection}, which you obtain locally:
+
+\begin{lstlisting}[style=rs]
+pub fn get(&self) -> Result<PooledConnection<M>, Error>   // r2d2::Pool::get -- note &self
+\end{lstlisting}
+
+\code{r2d2::Pool} is \code{pub struct Pool<M>(Arc<SharedPool<M>>)}. It is \code{Send},
+\code{Sync}, and \code{Clone}, and its \code{Clone} is an atomic refcount bump. Concurrent
+immutable access is exactly what it is built for. Declaring the repository \code{\&mut self}
+throws that away: every caller now needs exclusive access, which in an async server means putting
+the repository behind a \code{Mutex} and serialising every request through it --- destroying the
+concurrency the pool exists to provide. This is defect \dnum{8}.
+
+\begin{pattern}[Take \code{\&self}, clone the pool]
+\begin{lstlisting}[style=rs]
+#[derive(Clone)]                                  // cheap: one Arc bump
+pub struct PublicationRepository { pool: DbPool }
+
+impl PublicationRepository {
+    pub fn new(pool: DbPool) -> Self { Self { pool } }
+
+    pub async fn list(&self) -> Result<Vec<PublicationItem>, RepoError> {
+        let pool = self.pool.clone();             // clone into the 'static closure
+        // ... see the next section for the closure
+    }
+}
+\end{lstlisting}
+And do not wrap it in \code{Arc<Pool<...>>}. It is already an \code{Arc}; a second layer is pure
+indirection.
+\end{pattern}
+
+\subsection*{4. The signatures are synchronous, and that is the fatal one}
+
+\code{fn get\_all(\&mut self) -> anyhow::Result<Vec<T>>} is a blocking function. Called from a
+server function, it blocks an Actix worker thread. The rest of this chapter is about why that
+matters more than it sounds like it should.
+
+\section{Blocking: the bug that no test will find}
+
+\begin{keyidea}
+Diesel is synchronous. A server function is asynchronous. Calling the former directly from the
+latter does not fail --- it silently converts your concurrent server into a sequential one.
+\end{keyidea}
+
+\subsection{The mechanism}
+
+An async runtime multiplexes many tasks onto few threads by requiring that every task yield when
+it waits. A blocking call does not yield: it holds its thread for the whole duration of the wait,
+so the scheduler on that thread cannot poll any other task. Tokio's own documentation is blunt
+about it --- a blocking operation in a task ``would block the entire thread, preventing other tasks
+from running''.
+
+Actix makes the consequence sharper than generic Tokio, because each HTTP worker processes its
+accepted connections on one thread, and the default worker count is
+\code{std::thread::available\_parallelism()}. So with $W$ workers and a query taking $T$ seconds,
+exactly $W$ queries progress at a time, and throughput caps near $W/T$ requests per second
+regardless of how idle Postgres is.
+
+\begin{diagram}{Four Actix workers, each handling one request. Above: Diesel called directly ---
+each worker is held for the whole query and cannot serve anyone else. Below: the query is handed to
+the blocking pool --- workers return to the event loop immediately.}{fig:blocking}
+\begin{tikzpicture}[x=1mm,y=1mm]
+  % ---- BAD ----
+  \node[anchor=west,font=\sffamily\scriptsize\bfseries,text=crimson] at (0,6) {direct call --- worker blocked};
+  \foreach \i in {0,1,2,3} {
+    \node[anchor=east,tag] at (-1,{-\i*7}) {worker \i};
+    \draw[draw=rule,line width=0.4pt] (0,{-\i*7-3}) rectangle (120,{-\i*7+3});
+    \fill[pattern=north east lines,pattern color=crimson!55,draw=crimson!55,line width=0.4pt]
+      (4,{-\i*7-3}) rectangle (96,{-\i*7+3});
+  }
+  \node[lbl,anchor=west] at (30,0) {blocked waiting on Postgres};
+  \node[anchor=west,tag,text=crimson] at (122,{-1.5*7}) {queue grows};
+
+  % ---- GOOD ----
+  \node[anchor=west,font=\sffamily\scriptsize\bfseries,text=moss] at (0,-32) {web::block --- worker free};
+  \foreach \i in {0,1,2,3} {
+    \node[anchor=east,tag] at (-1,{-38-\i*7}) {worker \i};
+    \draw[draw=rule,line width=0.4pt] (0,{-38-\i*7-3}) rectangle (120,{-38-\i*7+3});
+    \fill[fill=moss!22,draw=moss!55,line width=0.4pt] (4,{-38-\i*7-3}) rectangle (12,{-38-\i*7+3});
+    \fill[fill=moss!22,draw=moss!55,line width=0.4pt] (92,{-38-\i*7-3}) rectangle (100,{-38-\i*7+3});
+    \draw[flow,draw=slate!60,line width=0.5pt] (12,{-38-\i*7}) -- (92,{-38-\i*7});
+  }
+  \node[lbl,anchor=west] at (26,-38) {worker polls other tasks while it waits};
+  \foreach \i in {0,1,2,3} {
+    \node[anchor=east,tag,text=slate] at (-1,{-70-\i*5}) {blk. thread \i};
+    \draw[draw=rule,line width=0.4pt] (0,{-70-\i*5-2}) rectangle (120,{-70-\i*5+2});
+    \fill[fill=slate!18,draw=slate!45,line width=0.4pt] (12,{-70-\i*5-2}) rectangle (92,{-70-\i*5+2});
+  }
+  \node[lbl,anchor=west] at (30,-70) {the query actually runs here};
+\end{tikzpicture}
+\end{diagram}
+
+\subsection{What it looks like when it happens}
+
+Not a crash and not a panic --- which is why it is easy to ship. The symptoms are:
+
+\begin{itemize}
+  \item flat, low CPU while p99 latency climbs;
+  \item request times that cluster in multiples of your query time;
+  \item \emph{static assets and health checks timing out too}, because they share the same
+    workers;
+  \item no improvement when you raise the r2d2 pool size --- the bottleneck is the worker thread,
+    not the pool. This symptom is the giveaway.
+\end{itemize}
+
+\section{The fix}
+
+\begin{pattern}[Wrap every query in \code{web::block}]
+\begin{lstlisting}[style=rs]
+pub async fn list(&self) -> Result<Vec<PublicationItem>, RepoError> {
+    use crate::schema::publication_items::dsl::*;
+    let pool = self.pool.clone();
+
+    let rows = actix_web::web::block(move || {
+        let mut conn = pool.get()?;                   // NOTE: get() is INSIDE the closure
+        publication_items
+            .select(PublicationItem::as_select())
+            .load(&mut conn)
+    })
+    .await?                                            // BlockingError
+    .map_err(RepoError::from)?;                        // the inner error
+
+    Ok(rows)
+}
+\end{lstlisting}
+\end{pattern}
+
+Four details in those twelve lines, each of which is a bug if you get it wrong.
+
+\begin{description}
+  \item[\code{pool.get()} goes inside the closure.] \code{get()} is itself a blocking call: it
+    parks the calling thread for up to \code{connection\_timeout}, which defaults to
+    \emph{30 seconds}. Acquiring the connection before the closure reintroduces the exact bug you
+    are fixing, in its worst form. The official Actix Diesel example puts \code{get()} inside the
+    closure for precisely this reason.
+
+  \item[There are two \code{Result}s, so there are two \code{?}.]
+    \code{web::block(...).await} gives you
+    \code{Result<Result<T, E>, BlockingError>}. One \code{?} will not compile; an \code{.unwrap()}
+    on the outer one swallows the real database error.
+
+  \item[Never hold a \code{PooledConnection} across an \code{.await}.] Acquire it and drop it
+    inside one closure. Holding it pins a pooled connection for the whole async section, and
+    connections are the scarcest resource you have.
+
+  \item[Blocking tasks are not cancellable.] If the visitor closes the tab, Actix drops the
+    request future --- but the closure already handed to the blocking pool runs to completion and
+    keeps holding its connection. This is how a pool gets exhausted by clients that already gave
+    up, and it is the reason to set a short \code{connection\_timeout}.
+\end{description}
+
+\subsection{The alternatives, and why not to take them}
+
+\begin{description}
+  \item[\code{tokio::task::spawn\_blocking}] is what \code{web::block} calls internally --- its
+    body is literally \code{let fut = actix\_rt::task::spawn\_blocking(f); async \{ fut.await.map\_err(|\_| BlockingError) \}}.
+    Note what that \code{map\_err} discards: \code{BlockingError} is a fieldless unit struct, so
+    whether the closure panicked or was cancelled is lost. If you want that detail for logging,
+    call \code{spawn\_blocking} yourself and keep the \code{JoinError}, which has
+    \code{is\_panic()} and \code{into\_panic()}. A reasonable choice for one central helper; not
+    worth it at every call site.
+
+  \item[\code{deadpool-diesel}] gives you an async \code{pool.get()} and an \code{interact()}
+    method that does the thread hop for you. It adds a dependency to solve a problem
+    \code{web::block} already solves, and its newest release (0.6.1) is from May 2024. Skip it
+    unless contention on connection \emph{acquisition} becomes your bottleneck, which for a
+    personal site it will not.
+
+  \item[\code{diesel-async}] removes the thread hop entirely and is genuinely production-viable
+    with Postgres. It is also still 0.x (0.9.2 as of mid-2026), reimplements the Postgres wire
+    protocol rather than using \code{libpq}, and has had subtle lifetime bugs --- notably a
+    ``Cannot access shared transaction state'' panic when a pooled connection returns to the pool
+    before the futures borrowing it are awaited. Adopting it would trade a solved problem for API
+    churn with no measurable benefit below thousands of requests per second.
+\end{description}
+
+\begin{pattern}[The decision]
+Keep synchronous Diesel with r2d2, and wrap every query in \code{web::block}. Revisit only if you
+ever measure connection-acquisition contention.
+\end{pattern}
+
+\section{Pool sizing}
+
+The defaults will work for a personal site, but two of them are worth changing and the reasoning
+generalises.
+
+\begin{lstlisting}[style=rs,caption={A pool built from configuration, with deliberate limits.}]
+Pool::builder()
+    .max_size(cfg.db_max_connections)             // default is 10
+    .connection_timeout(Duration::from_secs(5))   // default is 30 -- far too long
+    .test_on_check_out(true)
+    .build(ConnectionManager::<PgConnection>::new(&cfg.database_url))
+\end{lstlisting}
+
+\code{connection\_timeout} matters because of the non-cancellability point above: a thread waiting
+30 seconds for a connection is a blocking-pool slot doing nothing for 30 seconds. Five seconds
+fails fast instead.
+
+\code{max\_size} sits inside two independent bounds, and it is easy to reason about only one:
+
+\begin{itemize}
+  \item \textbf{Below the blocking capacity.} Actix's blocking pool is \emph{per worker}, not
+    global --- \code{worker\_max\_blocking\_threads} defaults to 512 divided by available
+    parallelism, so on an eight-core machine that is 64 per worker, 512 in total. Sizing math
+    borrowed from plain-Tokio advice (one global 512-thread pool) is wrong under Actix.
+  \item \textbf{Below Postgres's budget.} \code{max\_size} multiplied by the number of running
+    instances must stay under the server's \code{max\_connections}. r2d2's default of 10 per
+    instance quietly exhausts a small managed Postgres as soon as you run two replicas.
+\end{itemize}
+
+% ===========================================================================
+\chapter{Errors that cross the wire}
+\label{ch:errors}
+
+\section{Four layers, four error types}
+
+Error handling is where half-built applications accumulate the most incidental damage, because the
+easy thing --- one error type everywhere --- works fine until the day it leaks a connection string
+to a browser. The layering below is small enough to adopt now.
+
+\begin{table}[htbp]
+\centering
+\caption{Which error type belongs where.}
+\label{tab:errors}
+\small
+\begin{tabular}{@{}L{0.18\textwidth}L{0.28\textwidth}L{0.46\textwidth}@{}}
+\toprule
+\textbf{Layer} & \textbf{Type} & \textbf{Rule} \\
+\midrule
+driver & \code{diesel::result::Error}, \code{r2d2::Error} & never escapes \file{repository.rs} \\
+repository / domain & \code{thiserror} enums, one per subject or use case & named variants for what callers can act on, plus \code{Unknown(anyhow::Error)} \\
+wire & one \code{AppError} in \file{src/error.rs} & serde-serialisable, ungated, \emph{carries no internal detail} \\
+process & \code{anyhow} & \file{main.rs} and adapter constructors only \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{why}[Why \code{anyhow} does not belong in the repository]
+Your repositories currently return \code{anyhow::Result<T>} with a \code{.context("Can't get
+publication items from db")}. That is fine for logging and useless for deciding. A caller cannot
+ask an \code{anyhow::Error} ``was this a missing row or a dead connection?'' without matching on
+strings. \code{anyhow} is right where the only reasonable response is to log and give up --- which
+is \file{main.rs} --- and wrong wherever a caller might branch.
+
+There is also a copy-paste artefact worth noticing: three of the four repositories say
+\code{"Can't get publication items from db"} regardless of which table they queried. That is
+defect \dnum{11}, and it is a symptom rather than a cause. A typed error would have made the
+mistake impossible, because \code{PortfolioError::NotFound} cannot say ``publication''.
+\end{why}
+
+\section{The wire error type}
+
+Leptos 0.8 changed the recommended approach here, and tutorials written for 0.6 or 0.7 will lead
+you astray. \code{ServerFnError<MyError>} --- the \code{WrappedServerError} variant --- is
+\textbf{deprecated as of 0.8.0}. The supported way to return a domain-shaped error is to implement
+\code{FromServerFnError} on your own enum.
+
+\begin{lstlisting}[style=rs,caption={\file{src/error.rs} --- ungated, and the only error the browser sees.}]
+use leptos::prelude::ServerFnErrorErr;
+use leptos::server_fn::codec::JsonEncoding;
+use leptos::server_fn::error::FromServerFnError;
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, Serialize, Deserialize, thiserror::Error)]
+pub enum AppError {
+    #[error("not found")]
+    NotFound,
+    #[error("invalid input: {0}")]
+    Validation(String),
+    #[error("internal error")]
+    Internal,                             // deliberately carries nothing
+    #[error("transport: {0:?}")]
+    ServerFn(ServerFnErrorErr),           // required by the trait below
+}
+
+impl FromServerFnError for AppError {
+    type Encoder = JsonEncoding;
+    fn from_server_fn_error(value: ServerFnErrorErr) -> Self {
+        AppError::ServerFn(value)
+    }
+}
+\end{lstlisting}
+
+\begin{pattern}[\code{Internal} must be empty]
+\code{AppError::Internal} carries no payload on purpose. Everything unexpected collapses into it,
+and the real cause is logged server-side with \code{tracing::error!}. The alternative ---
+\code{ServerFnError::ServerError(e.to\_string())} --- sends the string to the browser verbatim,
+and \code{e.to\_string()} on a Diesel or r2d2 error can contain your connection string. This is
+the single most common way a Rust web application leaks infrastructure detail.
+\end{pattern}
+
+\begin{lstlisting}[style=rs,caption={The mapping layer: where a domain error becomes a wire error.}]
+#[cfg(feature = "ssr")]
+impl From<RepoError> for AppError {
+    fn from(e: RepoError) -> Self {
+        use actix_web::http::StatusCode;
+        let status = expect_context::<leptos_actix::ResponseOptions>();
+        match e {
+            RepoError::NotFound => {
+                status.set_status(StatusCode::NOT_FOUND);
+                AppError::NotFound
+            }
+            other => {
+                tracing::error!(error = ?other, "unhandled repository error");
+                status.set_status(StatusCode::INTERNAL_SERVER_ERROR);
+                AppError::Internal          // nothing leaks
+            }
+        }
+    }
+}
+\end{lstlisting}
+
+\begin{pitfall}[Server-function errors do not set a status code by themselves]
+An error returned from a \code{\#[server]} function travels as an encoded body plus a marker
+header (\code{SERVER\_FN\_ERROR\_HEADER}). The HTTP status stays 200 unless you set it. If you
+want a genuine 404 --- and you do, for crawlers, caches and uptime monitoring --- you must call
+\code{ResponseOptions::set\_status} explicitly, as above.
+\end{pitfall}
+
+\begin{pitfall}[\code{?} stops working when you leave the default error type]
+With \code{Result<T, ServerFnError>} you get \code{impl<E: std::error::Error> From<E> for
+ServerFnError} for free, so \code{?} converts anything. The moment you switch to your own
+\code{AppError}, that blanket impl is gone and you must write the conversions. In particular
+\code{leptos\_actix::extract()} returns \code{ServerFnErrorErr}, not \code{ServerFnError}, so it
+becomes \code{.map\_err(AppError::from\_server\_fn\_error)?}.
+\end{pitfall}
+
+\begin{pattern}[Start with \code{ServerFnError}, migrate deliberately]
+For the first few server functions, \code{Result<T, ServerFnError>} is fine and keeps \code{?}
+ergonomic while you are still finding the shape of the code. Move to \code{AppError} when the UI
+first needs to \emph{distinguish} two failures --- typically the first time you want a real 404
+page. Do not do both at once; a codebase with two wire-error conventions is worse than either.
+\end{pattern}
+
+% ===========================================================================
+\chapter{The composition root}
+\label{ch:composition}
+
+\section{What is wrong with \file{main.rs} today}
+
+\file{src/database/connection.rs} builds a pool. Nothing calls it. \file{src/main.rs} is the
+starter template verbatim: it configures Leptos, serves static files, and never mentions a
+database. Closing that gap is the single highest-value change in this document, because nothing
+else can be tested until data can reach a page.
+
+There are also three smaller issues in the current file, all in the same few lines:
+
+\begin{lstlisting}[style=rs,caption={\file{src/main.rs}, lines 15--21 --- three problems in seven lines.}]
+HttpServer::new(move || {
+    let routes = generate_route_list(App);          // (a) fine, but see below
+    let leptos_options = &conf.leptos_options;
+    let site_root = leptos_options.site_root.clone().to_string();
+
+    println!("listening on http://{}", &addr);      // (b) printed once PER WORKER
+    // ...
+        .service(Files::new("/assets", &site_root)) // (c) serves the whole site root
+\end{lstlisting}
+
+\begin{description}
+  \item[(a)] \code{generate\_route\_list(App)} inside the factory is correct --- it is required
+    per worker, and it is what the official template does. Mentioned only so you do not ``fix'' it.
+  \item[(b)] The \code{println!} is inside the app factory, so it runs once per worker thread and
+    you get one line per CPU core at startup. Harmless, confusing, and a sign the line is in the
+    wrong scope. Move it above \code{HttpServer::new}. Defect \dnum{17}.
+  \item[(c)] \code{Files::new("/assets", \&site\_root)} maps the URL \code{/assets} onto
+    \emph{the whole site root}, not onto the assets subdirectory --- so
+    \code{/assets/pkg/egonik-site.wasm} is also reachable. It comes from the upstream template and
+    is not a security hole (everything under \code{site\_root} is public anyway), but it is
+    surprising. Defect \dnum{18}.
+\end{description}
+
+\section{\code{AppState}, and the one line that must move}
+\label{sec:appstate}
+
+This section was going to propose an \code{AppState}. While the document was being written you
+wrote one, so instead it endorses what you wrote and flags a single line that will exhaust your
+database.
+
+\begin{verified}[What is in the tree now]
+\begin{lstlisting}[style=rs,caption={\file{src/entrypoint/application\_state.rs}, as written.}]
+#[derive(Debug, Clone)]
+pub struct AppState {
+    pub job_experience_repository: JobExperienceItemRepository,
+    pub personal_information_repository: PersonalInformationRepository,
+    pub portfolio_items_repository: PortfolioItemsRepository,
+    pub publications_repository: PublicationsRepository,
+}
+
+impl AppState {
+    pub fn new(pool: DbPool) -> Self {
+        // one pool, cloned into four repositories -- each clone is an Arc bump
+        Self {
+            personal_information_repository: PersonalInformationRepository::new(pool.clone()),
+            job_experience_repository: JobExperienceItemRepository::new(pool.clone()),
+            portfolio_items_repository: PortfolioItemsRepository::new(pool.clone()),
+            publications_repository: PublicationsRepository::new(pool),
+        }
+    }
+}
+\end{lstlisting}
+\end{verified}
+
+\begin{pattern}[This is the right shape --- keep it]
+Holding the four \emph{repositories} rather than the raw pool is better than what this chapter was
+going to suggest. A server function then asks for the capability it needs
+(\code{state.publications\_repository}) rather than for a database handle it has to know what to do
+with, and the pool stops being ambient. Two details you got right and that are worth knowing you
+got right:
+
+\code{Clone} is required, because Actix hands application data to each worker, and it is cheap
+because every repository is one \code{Arc} bump --- which is why \code{\#[derive(Clone)]} on
+\code{PublicationsRepository} was the correct accompanying change.
+
+Taking \code{pool} as a parameter rather than calling \code{get\_connection\_pool()} inside
+\code{new} keeps the dependency in the signature, which is exactly the property
+\S\ref{sec:config} argues for.
+\end{pattern}
+
+Two things to add when convenient: \code{config: Arc<AppConfig>} alongside the repositories, so that
+things like a page size or a base URL stop being constants; and \code{new} returning
+\code{anyhow::Result<Self>} once the pool construction stops panicking.
+
+\subsection{The line that must move}
+
+\begin{antipattern}[The pool is being built inside the worker factory]
+\begin{lstlisting}[style=rs,caption={\file{src/main.rs}, as written. The closure body runs
+\emph{once per worker}.}]
+HttpServer::new(move || {
+    let pool = get_connection_pool();          // <-- HERE. Once per worker.
+    let routes = generate_route_list(App);
+    let app_state = AppState::new(pool);
+    println!("listening on http://{}", &addr);
+
+    App::new()
+        .app_data(web::Data::new(app_state))
+        // ...
+})
+\end{lstlisting}
+\end{antipattern}
+
+Everything in that closure is constructed once per worker thread, and you already have proof of how
+many times that is: the \code{println!} on the following line printed \textbf{twelve times} when the
+binary was run for this document. Twelve invocations of the factory means twelve independent
+connection pools.
+
+\begin{verified}[Verified: this over-subscribes Postgres by 20\%]
+\begin{lstlisting}[style=out]
+$ nproc                                     # = Actix's default worker count
+12
+$ grep -c 'listening on' server.log         # = times the factory closure ran
+12
+
+r2d2's Builder::max_size default              = 10   (connection.rs sets no max_size)
+pools created                                 = 12
+maximum connections this process will open     = 120
+
+$ psql -tAc 'show max_connections'
+100
+\end{lstlisting}
+\end{verified}
+
+So under load this process alone tries to open 120 connections against a server that permits 100,
+and the failures arrive as \code{r2d2} timeouts surfacing as 500s --- after a 30-second wait each,
+because \code{connection\_timeout} is also at its default. Note that it will not fail in
+development: each pool opens connections lazily, and one browser tab never needs more than a handful.
+That is what makes it worth fixing before it can be observed.
+
+\begin{pattern}[Build it once, above the factory, and clone in]
+\begin{lstlisting}[style=rs]
+let pool = get_connection_pool();          // once
+let app_state = AppState::new(pool);       // once
+println!/tracing::info!(...);              // once
+
+HttpServer::new(move || {
+    let routes = generate_route_list(App); // this one genuinely IS per-worker
+    App::new()
+        .app_data(web::Data::new(app_state.clone()))   // one Arc bump per worker
+        // ...
+})
+\end{lstlisting}
+\end{pattern}
+
+\begin{why}[Why \code{generate\_route\_list} stays inside and the pool does not]
+They look symmetrical and they are not. \code{generate\_route\_list(App)} produces a
+\code{Vec<ActixRouteListing>} that \code{leptos\_routes} consumes when building \emph{that worker's}
+service tree, so it belongs to the factory --- and it allocates nothing scarce. The pool holds
+operating-system sockets against a server with a hard limit. The rule is not ``move everything
+out of the factory''; it is \textbf{anything holding a finite external resource is constructed
+once}.
+\end{why}
+
+This is defect \dnum{38}, and it is the only new blocker introduced since the register was written.
+
+\section{Getting the pool into a server function}
+
+Two mechanisms exist. Both work; they differ in what they couple you to.
+
+\begin{diagram}{Two routes from \code{main} to a server-function body. The Actix route (left) is
+what the Leptos book documents; the context route (right) is what you want once a server function
+should receive a domain service rather than an Actix type.}{fig:wiring}
+\begin{tikzpicture}[node distance=6mm]
+  \node[srv,minimum width=44mm] (main) {\file{main.rs}\\[1pt]\scriptsize builds the pool \emph{once}};
+
+  \node[srv,minimum width=50mm,below left=10mm and 2mm of main] (ad)
+    {\code{.app\_data(web::Data::new(pool.clone()))}};
+  \node[srv,minimum width=50mm,below right=10mm and 2mm of main] (ctx)
+    {\code{.leptos\_routes\_with\_context(routes,}\\\code{\ \ move || provide\_context(pool.clone()), ...)}};
+
+  \node[shared,minimum width=50mm,below=9mm of ad] (ex)
+    {\code{leptos\_actix::extract::<Data<Pool>>()}\\[1pt]\scriptsize inside the \code{\#[server]} body};
+  \node[shared,minimum width=50mm,below=9mm of ctx] (uc)
+    {\code{use\_context::<Pool>()}\\[1pt]\scriptsize inside the \code{\#[server]} body};
+
+  \node[box,fill=wash,minimum width=104mm,below=9mm of $(ex)!0.5!(uc)$] (body)
+    {the query runs, wrapped in \code{web::block}};
+
+  \draw[flow] (main) -- (ad);
+  \draw[flow] (main) -- (ctx);
+  \draw[flow] (ad) -- (ex);
+  \draw[flow] (ctx) -- (uc);
+  \draw[flow] (ex) -- (body);
+  \draw[flow] (uc) -- (body);
+\end{tikzpicture}
+\end{diagram}
+
+\subsection{The Actix route --- start here}
+
+\begin{lstlisting}[style=rs,caption={The wiring, in \file{main.rs}.}]
+let pool = build_pool(&cfg)?;                     // built ONCE, outside the factory
+
+HttpServer::new(move || {
+    App::new()
+        .app_data(web::Data::new(pool.clone()))   // one Arc bump per worker
+        .app_data(web::Data::new(leptos_options.to_owned()))
+        .service(Files::new("/pkg", format!("{site_root}/pkg")))
+        .service(favicon)
+        .leptos_routes(routes, { /* the HTML shell */ })
+})
+\end{lstlisting}
+
+\begin{lstlisting}[style=rs,caption={And reading it back, in \file{src/publications/api.rs}.}]
+#[server]
+pub async fn list_publications() -> Result<Vec<PublicationDto>, ServerFnError> {
+    use actix_web::web::Data;
+    use crate::database::connection::DbPool;
+    use crate::publications::repository::PublicationRepository;
+
+    let pool: Data<DbPool> = leptos_actix::extract().await?;
+    let repo = PublicationRepository::new(pool.get_ref().clone());
+    Ok(repo.list().await?.into_iter().map(Into::into).collect())
+}
+\end{lstlisting}
+
+\begin{why}[Why no extra route registration is needed]
+A reasonable expectation, carried over from earlier Leptos versions, is that server functions need
+their own Actix route --- something like
+\code{.route("/api/\{tail:.*\}", leptos\_actix::handle\_server\_fns())}. In
+\code{leptos\_actix} 0.8.7 that is \textbf{not} required: \code{leptos\_routes} registers every
+path from \code{server\_fn::actix::server\_fn\_paths()} itself, deliberately \emph{before} the
+router's wildcard route --- the source carries the comment ``register server functions first to
+allow for wildcard route in Leptos's Router''. \code{leptos\_routes} is literally
+\code{leptos\_routes\_with\_context(paths, || \{\}, app\_fn)}.
+
+Adding a second mount is not just redundant: if the duplicate lacks the same context closure it
+will silently drop context for browser-initiated calls, which produces a bug that appears only
+after hydration and never during SSR. Do not add it.
+\end{why}
+
+\begin{pitfall}[\code{extract()} sees the request head, not the body]
+\code{leptos\_actix::extract} is implemented as \code{use\_context::<Request>()} followed by
+\code{T::extract(\&req)}. The body has already been consumed by the server-function decoder, so
+\code{web::Json<T>} and \code{web::Form<T>} extractors will fail. \code{web::Data<T>},
+\code{Query<T>}, \code{ConnectionInfo}, \code{HttpRequest} and headers all work.
+\end{pitfall}
+
+\subsection{The context route --- where you will end up}
+
+The Actix route works, and it couples your server-function bodies to \code{actix\_web::web::Data}.
+That is a small cost now and an annoying one later, if you ever want to call a server function from
+a test without an Actix request in scope. The alternative injects your own type:
+
+\begin{lstlisting}[style=rs]
+let pool_for_ctx = pool.clone();
+App::new()
+    .leptos_routes_with_context(
+        routes,
+        move || provide_context(pool_for_ctx.clone()),   // both SSR *and* server-fn routes
+        { /* the HTML shell */ },
+    )
+\end{lstlisting}
+
+\begin{lstlisting}[style=rs]
+let pool = use_context::<DbPool>()
+    .ok_or_else(|| ServerFnError::new("pool missing from context"))?;
+\end{lstlisting}
+
+\begin{why}[Why this is safe in 0.8.7 and was not always]
+\code{leptos\_routes\_with\_context} registers the server-function routes with the \emph{same}
+context closure it uses for rendering. That matters because a server function is reached two
+different ways --- called directly by the renderer during SSR, and posted to over HTTP after
+hydration --- and both paths must have the context. The \code{leptos\_actix} docs warn about
+exactly this: if you mount \code{handle\_server\_fns} by hand you must provide the context to both
+handlers yourself. Using \code{leptos\_routes\_with\_context} and nothing else avoids the whole
+class of mistake.
+\end{why}
+
+\begin{pattern}[The order to do it in]
+Use \code{app\_data} plus \code{extract} for the first server function, because it is three lines
+and gets data on screen today. Switch to \code{leptos\_routes\_with\_context} when you introduce a
+service type that owns several repositories --- at that point you are injecting your own
+abstraction rather than an Actix wrapper, and the context route reads better.
+\end{pattern}
+
+\section{Configuration, and the \code{dotenv} call in the wrong place}
+\label{sec:config}
+
+\begin{lstlisting}[style=rs,caption={\file{src/database/connection.rs} as it stands.}]
+pub fn get_connection_pool() -> DbPool {
+    dotenv().ok();                                              // <-- (1)
+    let database_url = env::var("DATABASE_URL").expect("...");  // <-- (2)
+    // ...
+    .build(manager).expect("Could not build connection pool")    // <-- (3)
+}
+\end{lstlisting}
+
+Three things to change, and the third is the one that will actually hurt.
+
+\begin{enumerate}
+  \item \textbf{\code{dotenv()} inside a constructor.} It mutates process-global state from deep
+    inside a data-access function. Call it once, at the top of \code{main}, as the dev-time
+    convenience it is. Defect \dnum{12}.
+
+  \item \textbf{Reading the environment inside a constructor} hides a dependency from the type
+    signature and makes the function untestable without mutating the process environment --- which
+    in Rust 2024 is genuinely awkward, since \code{std::env::set\_var} is \code{unsafe} because it
+    is not thread-safe. Pass a value in: \code{fn build\_pool(cfg: \&AppConfig) -> anyhow::Result<DbPool>}.
+
+  \item \textbf{\code{.expect()} in a library function.} A panic here aborts the process with a
+    message and no context. Return \code{anyhow::Result} and let \code{main} decide; \code{main}
+    is where ``log it and exit non-zero'' is the correct response.
+\end{enumerate}
+
+\begin{lstlisting}[style=rs,caption={\file{src/config.rs} --- typed, loaded once, validated at the edge.}]
+#[derive(Debug, serde::Deserialize)]
+pub struct AppConfig {
+    pub database_url: String,
+    #[serde(default = "default_pool_size")]
+    pub db_max_connections: u32,
+}
+
+impl AppConfig {
+    pub fn load() -> anyhow::Result<Self> {
+        Ok(config::Config::builder()
+            .add_source(config::File::with_name("config/base").required(false))
+            .add_source(config::Environment::with_prefix("EGONIK").separator("__"))
+            .build()?
+            .try_deserialize()?)
+    }
+}
+fn default_pool_size() -> u32 { 8 }
+\end{lstlisting}
+
+\begin{pitfall}[Do not use the \code{LEPTOS\_} prefix for your own variables]
+\code{LEPTOS\_} belongs to \code{leptos\_config}. Every field of \code{LeptosOptions} ---
+\code{site\_root}, \code{site\_addr}, \code{reload\_port}, \code{hash\_files}, and a dozen more ---
+maps to a \code{LEPTOS\_}-prefixed variable, and a future field could collide with yours. Use your
+own prefix. \code{EGONIK\_DATABASE\_URL} in the snippet above.
+\end{pitfall}
+
+\begin{pitfall}[\code{get\_configuration(Some("./Cargo.toml"))} reads Cargo.toml at runtime]
+Keep the \code{None} that the template gave you. Passing a path makes the running binary read
+\file{Cargo.toml} on startup, which works in development and fails in a container that ships only
+the binary and the site directory. With \code{None}, \code{LeptosOptions} comes from
+\code{LEPTOS\_*} environment variables --- which is exactly what a Dockerfile should set.
+\end{pitfall}
+
+\section{The whole composition root}
+
+Putting it together, this is what \file{main.rs} should look like. It is longer than the template
+and it is the only place in the codebase that knows how the pieces connect.
+
+\begin{lstlisting}[style=rs,caption={The target \file{src/main.rs}.}]
+#[cfg(feature = "ssr")]
+#[actix_web::main]
+async fn main() -> anyhow::Result<()> {
+    use actix_files::Files;
+    use actix_web::{web, App, HttpServer};
+    use leptos::config::get_configuration;
+    use leptos::prelude::*;
+    use leptos_actix::{generate_route_list, LeptosRoutes};
+    use leptos_meta::MetaTags;
+    use egonik_site::{app::*, config::AppConfig, database::connection::build_pool};
+
+    dotenvy::dotenv().ok();                       // once, here, dev convenience only
+    tracing_subscriber::fmt::init();              // see Chapter on operations
+
+    let cfg = AppConfig::load()?;                 // typed and validated before anything starts
+    let pool = build_pool(&cfg)?;                 // fail fast if the database is unreachable
+
+    let conf = get_configuration(None)?;          // LEPTOS_* only
+    let addr = conf.leptos_options.site_addr;
+    tracing::info!(%addr, "starting server");     // ONCE, not per worker
+
+    HttpServer::new(move || {
+        let routes = generate_route_list(App);
+        let leptos_options = &conf.leptos_options;
+        let site_root = leptos_options.site_root.clone().to_string();
+
+        App::new()
+            .app_data(web::Data::new(pool.clone()))
+            .app_data(web::Data::new(leptos_options.to_owned()))
+            .service(Files::new("/pkg", format!("{site_root}/pkg")))
+            .service(favicon)
+            .leptos_routes(routes, {
+                let leptos_options = leptos_options.clone();
+                move || view! {
+                    <!DOCTYPE html>
+                    <html lang="en">
+                        <head>
+                            <meta charset="utf-8"/>
+                            <meta name="viewport" content="width=device-width, initial-scale=1"/>
+                            <AutoReload options=leptos_options.clone()/>
+                            <HydrationScripts options=leptos_options.clone()/>
+                            <MetaTags/>
+                        </head>
+                        <body><App/></body>
+                    </html>
+                }
+            })
+    })
+    .bind(&addr)?
+    .run()
+    .await?;
+    Ok(())
+}
+\end{lstlisting}
+
+\begin{pattern}[Fail fast at startup]
+\code{build\_pool} returning \code{Result} into a \code{main} that returns
+\code{anyhow::Result<()>} means an unreachable database stops the process immediately with a
+readable message, instead of producing a 500 on the first request. For a personal site running
+under a supervisor that restarts it, this is the behaviour you want: a container that will not
+start is far easier to diagnose than one that starts and silently serves errors.
+\end{pattern}

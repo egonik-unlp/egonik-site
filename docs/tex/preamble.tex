@@ -1,0 +1,256 @@
+% ---------------------------------------------------------------------------
+%  preamble.tex -- shared setup, visual language, listing languages, TikZ styles
+% ---------------------------------------------------------------------------
+
+\usepackage[a4paper,top=1.05in,bottom=1.15in,inner=1.15in,outer=1.15in]{geometry}
+
+% --- fonts -----------------------------------------------------------------
+\usepackage{fontspec}
+\usepackage{libertinus-otf}
+\setmonofont{Iosevka}[Scale=MatchLowercase]
+\usepackage{microtype}
+
+% --- colour palette --------------------------------------------------------
+\usepackage{xcolor}
+\definecolor{ink}{HTML}{15202B}       % near-black, body & headings
+\definecolor{slate}{HTML}{4A5A6B}     % muted text, rules
+\definecolor{rust}{HTML}{B4522A}      % primary accent (the language, and the colour)
+\definecolor{teal}{HTML}{1F6F73}      % secondary accent
+\definecolor{amber}{HTML}{A8710A}     % caution
+\definecolor{moss}{HTML}{2F6B3C}      % good / recommended
+\definecolor{crimson}{HTML}{9B2226}   % bad / anti-pattern
+\definecolor{violet}{HTML}{5B4B8A}    % procedure
+\definecolor{paper}{HTML}{FBFAF8}
+\definecolor{wash}{HTML}{F2EFEA}
+\definecolor{rule}{HTML}{D9D3C9}
+
+% --- sectioning ------------------------------------------------------------
+\usepackage{titlesec}
+\titleformat{\chapter}[display]
+  {\normalfont\sffamily}
+  {\raggedright\color{rust}\fontsize{13}{13}\selectfont\bfseries\scshape Chapter \thechapter}
+  {6pt}
+  {\raggedright\color{ink}\fontsize{25}{29}\selectfont\bfseries}
+  [{\vspace{4pt}\color{rule}\titlerule[1pt]}]
+\titlespacing*{\chapter}{0pt}{0pt}{28pt}
+
+\titleformat{\section}
+  {\normalfont\large\bfseries\color{ink}}{\color{rust}\thesection}{0.7em}{}
+\titleformat{\subsection}
+  {\normalfont\normalsize\bfseries\color{ink}}{\color{rust}\thesubsection}{0.6em}{}
+\titleformat{\subsubsection}[runin]
+  {\normalfont\normalsize\bfseries\color{slate}}{}{0em}{}[\;---]
+
+\setcounter{secnumdepth}{2}
+\setcounter{tocdepth}{1}
+
+% --- running heads ---------------------------------------------------------
+\usepackage{fancyhdr}
+\pagestyle{fancy}
+\fancyhf{}
+\renewcommand{\headrulewidth}{0.4pt}
+\renewcommand{\headrule}{\hbox to\headwidth{\color{rule}\leaders\hrule height \headrulewidth\hfill}}
+\fancyhead[L]{\footnotesize\sffamily\color{slate}\nouppercase{\leftmark}}
+\fancyhead[R]{\footnotesize\sffamily\color{slate}\thepage}
+\fancypagestyle{plain}{\fancyhf{}\renewcommand{\headrulewidth}{0pt}%
+  \fancyfoot[C]{\footnotesize\sffamily\color{slate}\thepage}}
+\renewcommand{\chaptermark}[1]{\markboth{\thechapter\quad #1}{}}
+
+% --- lists, tables, misc ---------------------------------------------------
+\usepackage{enumitem}
+\setlist[itemize]{leftmargin=1.25em,topsep=4pt,itemsep=2pt,parsep=0pt}
+\setlist[enumerate]{leftmargin=1.5em,topsep=4pt,itemsep=3pt,parsep=0pt}
+\setlist[description]{leftmargin=1.25em,style=nextline,topsep=5pt,itemsep=4pt,font=\normalfont\bfseries\color{ink}}
+
+\usepackage{booktabs}
+\usepackage{longtable}
+% longtable puts its \caption in a box of width \LTcapwidth (4in by default), which
+% overflows once the table itself is wider than that. Match the text block instead.
+\setlength{\LTcapwidth}{\textwidth}
+\usepackage{array}
+\usepackage{ragged2e}
+\usepackage{multirow}
+\renewcommand{\arraystretch}{1.22}
+\newcolumntype{L}[1]{>{\RaggedRight\arraybackslash}p{#1}}
+
+\usepackage{graphicx}
+\usepackage{caption}
+\captionsetup{font={small},labelfont={bf,color=rust},labelsep=period,width=0.94\textwidth}
+
+\usepackage{needspace}
+
+% --- hyperlinks ------------------------------------------------------------
+\usepackage[hidelinks]{hyperref}
+\hypersetup{
+  colorlinks=true, linkcolor=teal, urlcolor=rust, citecolor=teal,
+  pdftitle={egonik-site: Architecture and Continuation Guide},
+  pdfauthor={Eduardo Gonik},
+  bookmarksnumbered=true,
+}
+\usepackage{bookmark}
+
+% --- code listings ---------------------------------------------------------
+\usepackage{listings}
+
+\definecolor{kw}{HTML}{9B2226}
+\definecolor{ty}{HTML}{1F6F73}
+\definecolor{cmt}{HTML}{6E7A87}
+\definecolor{str}{HTML}{2F6B3C}
+\definecolor{attr}{HTML}{8A5A00}
+
+\lstdefinelanguage{Rust}{
+  morekeywords={as,async,await,break,const,continue,crate,dyn,else,enum,extern,false,fn,
+    for,if,impl,in,let,loop,match,mod,move,mut,pub,ref,return,self,static,struct,super,
+    trait,true,type,union,unsafe,use,where,while,yield},
+  morekeywords=[2]{Vec,Option,Result,String,str,i32,i64,u32,u64,f64,bool,usize,Box,Arc,Rc,
+    Self,Ok,Err,Some,None,HashMap,BTreeMap,NaiveDate,DateTime,Utc,IntoView,Signal,RwSignal,
+    Resource,Suspense,ErrorBoundary,ServerFnError,DbPool,Pool,PgConnection,Duration},
+  morekeywords=[3]{derive,cfg,cfg_attr,server,component,serde,diesel,tokio,actix_web,test,
+    allow,deny,warn,must_use,non_exhaustive,tracing},
+  sensitive=true,
+  morecomment=[l]{//},
+  morecomment=[s]{/*}{*/},
+  morestring=[b]{"},
+}
+
+\lstdefinelanguage{Toml}{
+  morekeywords={true,false},
+  sensitive=false,
+  morecomment=[l]{\#},
+  morestring=[b]{"},
+}
+
+\lstdefinestyle{base}{
+  basicstyle=\ttfamily\fontsize{8.4}{10.2}\selectfont\color{ink},
+  keywordstyle=\color{kw}\bfseries,
+  keywordstyle=[2]\color{ty},
+  keywordstyle=[3]\color{attr},
+  commentstyle=\color{cmt}\itshape,
+  stringstyle=\color{str},
+  showstringspaces=false,
+  breaklines=true,
+  breakatwhitespace=false,
+  postbreak=\mbox{\textcolor{rust}{$\hookrightarrow$}\space},
+  columns=fullflexible,
+  keepspaces=true,
+  tabsize=2,
+  frame=leftline,
+  framerule=1.6pt,
+  rulecolor=\color{rule},
+  framesep=7pt,
+  xleftmargin=10pt,
+  backgroundcolor=\color{paper},
+  aboveskip=10pt, belowskip=10pt,
+  captionpos=b,
+  abovecaptionskip=6pt,
+}
+\lstset{style=base}
+
+\lstdefinestyle{rs}{style=base,language=Rust}
+\lstdefinestyle{sql}{style=base,language=SQL,
+  keywordstyle=\color{kw}\bfseries,morekeywords={SERIAL,TEXT,VARCHAR,BOOLEAN,DATE,TIMESTAMPTZ,
+  INTEGER,BIGINT,GENERATED,ALWAYS,IDENTITY,CASCADE,RESTRICT,DEFERRABLE,now,CITEXT,JSONB,SMALLINT}}
+\lstdefinestyle{toml}{style=base,language=Toml}
+\lstdefinestyle{sh}{style=base,language=bash,
+  basicstyle=\ttfamily\fontsize{8.4}{10.2}\selectfont\color{ink},
+  keywordstyle=\color{ink},commentstyle=\color{cmt}\itshape,
+  frame=leftline,framerule=1.6pt,rulecolor=\color{teal!45},backgroundcolor=\color{wash}}
+\lstdefinestyle{out}{style=base,
+  basicstyle=\ttfamily\fontsize{8}{9.6}\selectfont\color{slate},
+  frame=leftline,framerule=1.6pt,rulecolor=\color{slate!35},backgroundcolor=\color{wash},
+  keywordstyle=\color{slate}}
+\lstdefinestyle{tree}{style=base,
+  basicstyle=\ttfamily\fontsize{8.2}{10}\selectfont\color{ink},
+  frame=none,backgroundcolor=\color{white},xleftmargin=6pt,
+  keywordstyle=\color{ink},commentstyle=\color{rust}\itshape,
+  morecomment=[l]{\#}}
+
+\newcommand{\code}[1]{\texorpdfstring{\textcolor{ink}{\texttt{\small #1}}}{#1}}
+\newcommand{\file}[1]{\texorpdfstring{\textcolor{teal}{\texttt{\small #1}}}{#1}}
+
+% --- callout boxes ---------------------------------------------------------
+\usepackage[most]{tcolorbox}
+\tcbuselibrary{breakable,skins}
+
+\newtcolorbox{callout}[2][]{
+  breakable, enhanced, sharp corners,
+  colback=white, colframe=#2, boxrule=0pt,
+  borderline west={2.2pt}{0pt}{#2},
+  left=10pt,right=10pt,top=8pt,bottom=8pt,
+  fonttitle=\sffamily\bfseries\small,
+  coltitle=#2,
+  attach boxed title to top left={yshift*=-2mm,xshift=6mm},
+  boxed title style={colback=white,boxrule=0pt,sharp corners},
+  % without this, consecutive paragraphs inside a callout run together with
+  % neither indentation nor vertical space
+  parbox=false,
+  before upper={\setlength{\parskip}{5pt}\setlength{\parindent}{0pt}},
+  #1
+}
+
+\newenvironment{pattern}[1][The pattern]
+  {\begin{callout}[title={#1}]{moss}}{\end{callout}}
+\newenvironment{antipattern}[1][The anti-pattern]
+  {\begin{callout}[title={#1}]{crimson}}{\end{callout}}
+\newenvironment{pitfall}[1][Pitfall]
+  {\begin{callout}[title={#1}]{amber}}{\end{callout}}
+\newenvironment{why}[1][Why this matters]
+  {\begin{callout}[title={#1}]{teal}}{\end{callout}}
+\newenvironment{runbook}[1][Procedure]
+  {\begin{callout}[title={#1}]{violet}}{\end{callout}}
+\newenvironment{verified}[1][Verified on this machine]
+  {\begin{callout}[title={#1}]{slate}}{\end{callout}}
+
+% a compact "key idea" band, for the one-sentence takeaway of a section
+\newtcolorbox{keyidea}{
+  breakable, enhanced, sharp corners,
+  colback=wash, colframe=rule, boxrule=0.6pt,
+  left=11pt,right=11pt,top=8pt,bottom=8pt,
+  fontupper=\itshape
+}
+
+% --- TikZ ------------------------------------------------------------------
+\usepackage{tikz}
+\usetikzlibrary{arrows.meta,positioning,fit,calc,shapes.geometric,shapes.multipart,
+  backgrounds,decorations.pathreplacing,decorations.markings,matrix,patterns,
+  shadows.blur,shapes.symbols}
+
+\tikzset{
+  >=Stealth,
+  font=\sffamily\footnotesize,
+  box/.style={draw=rule,line width=0.7pt,rounded corners=2.5pt,fill=white,
+              align=center,inner sep=5pt,minimum height=8mm},
+  srv/.style={box,fill=teal!8,draw=teal!45},
+  cli/.style={box,fill=rust!8,draw=rust!45},
+  shared/.style={box,fill=violet!8,draw=violet!45},
+  db/.style={cylinder,shape border rotate=90,aspect=0.22,draw=slate!55,
+             fill=slate!8,align=center,inner sep=4pt,minimum height=11mm},
+  lane/.style={draw=rule,line width=0.6pt,fill=paper,rounded corners=3pt},
+  flow/.style={-{Stealth[length=4pt]},line width=0.8pt,draw=slate},
+  flowa/.style={flow,draw=rust,line width=0.9pt},
+  dep/.style={-{Stealth[length=4pt]},line width=0.7pt,draw=slate!70,dashed},
+  lbl/.style={font=\sffamily\scriptsize\itshape,text=slate,inner sep=1.5pt,fill=white},
+  tag/.style={font=\sffamily\scriptsize,text=slate},
+  seam/.style={draw=crimson!65,line width=1pt,dash pattern=on 4pt off 2.5pt},
+  ent/.style={draw=slate!45,line width=0.7pt,fill=white,align=left,inner sep=0pt,
+              rectangle split,rectangle split parts=2,rectangle split part fill={teal!10,white}},
+}
+
+% figure helper: centred TikZ with a caption.
+% adjustbox shrinks the picture only if it would otherwise spill into the margin,
+% so diagrams never overflow and are never enlarged past their natural size.
+\usepackage{adjustbox}
+\newenvironment{diagram}[2]% #1 = caption, #2 = label
+  {\begin{figure}[htbp]\centering\gdef\dgcap{#1}\gdef\dglbl{#2}%
+   \begin{adjustbox}{max width=\textwidth,center}}
+  {\end{adjustbox}\caption{\dgcap}\label{\dglbl}\end{figure}}
+
+% --- text helpers ----------------------------------------------------------
+\newcommand{\severity}[1]{%
+  \ifstrequal{#1}{blocker}{\textcolor{crimson}{\textbf{\scriptsize BLOCKER}}}{%
+  \ifstrequal{#1}{high}{\textcolor{crimson!80}{\textbf{\scriptsize HIGH}}}{%
+  \ifstrequal{#1}{medium}{\textcolor{amber}{\textbf{\scriptsize MEDIUM}}}{%
+  \textcolor{slate}{\textbf{\scriptsize LOW}}}}}}
+\usepackage{etoolbox}
+
+\newcommand{\dnum}[1]{\textcolor{rust}{\textbf{\small D#1}}}

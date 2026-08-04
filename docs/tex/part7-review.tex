@@ -1,0 +1,237 @@
+% ===========================================================================
+\chapter{Pattern review}
+\label{ch:review}
+
+\section{The short answer}
+
+\begin{keyidea}
+The structure is right and the wiring is right. What is wrong is concentrated in one place --- the
+\code{Repository} trait --- and it has now produced hard evidence against itself. Everything else on
+the list below is a small, local fix.
+\end{keyidea}
+
+Since the first draft of this document you fixed both blockers it identified in the wiring: the pool
+is now built once above \code{HttpServer::new}, and the \code{ssr} gates have moved off the subject
+modules onto the files that actually need them. Both builds are green, and there is a working
+end-to-end path from Postgres to a button in the browser. That is the hard part of this stack and it
+is done.
+
+\section{What is working, and worth not second-guessing}
+
+\begin{table}[htbp]
+\centering
+\caption{Patterns in the tree that are correct. Listed because knowing which decisions are settled is
+as useful as knowing which are not.}
+\label{tab:good}
+\small
+\begin{tabular}{@{}L{0.30\textwidth}L{0.64\textwidth}@{}}
+\toprule
+\textbf{Pattern} & \textbf{Why it is right} \\
+\midrule
+Per-file \code{cfg} gates in \file{<subject>/mod.rs} & \code{dto} and \code{components} ungated,
+\code{model} and \code{repository} gated. Exactly the shape Ch.~\ref{ch:layers} argues for, and it
+is what makes a server function expressible. \\
+Pool built once, \code{AppState} cloned per worker & Twelve pools became one.
+\code{app\_state.clone()} is an \code{Arc} bump. \\
+\code{AppState} holding repositories & Server functions ask for a capability rather than a database
+handle. \S\ref{sec:appstate}. \\
+Three structs per subject: \code{Item} / \code{Row} / \code{Dto} &
+\code{PublicationItem} is \code{Queryable}, \code{PublicationItemRow} is \code{Insertable} with no
+\code{id}, \code{PublicationItemDto} is the wire shape. This is \emph{better} than the two-struct
+rule in Ch.~\ref{ch:dto} --- a separate insert struct is how you stop passing a meaningless
+\code{id: 0} into a create. \\
+\code{From<PublicationItemDto> for PublicationItemRow} & Conversion by trait, next to the model, in
+the direction the standard library expects. \\
+\code{Action} $+$ \code{.into\_any()} in \code{ServerButton} & Correct 0.8 idioms: an \code{Action}
+for the imperative call, \code{pending()}/\code{value()} for state, \code{.into\_any()} to reconcile
+three branches with different view types. Ch.~\ref{ch:loading}. \\
+\code{entrypoint/} as the process edge & The instinct that ``the server lives here'' is right.
+Ch.~\ref{ch:routing} fills it in. \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\section{The one structural problem: \code{Repository<T, U>}}
+
+Chapter~\ref{ch:blocking} argued that this trait would not survive. It has now failed in the exact
+way predicted, and the evidence is in the tree rather than in an argument.
+
+\begin{verified}[Verified: the trait is forcing three implementors to lie]
+Adding \code{create\_article} to \code{Repository<T, U>} obliged every implementor to provide it.
+Three of the four cannot:
+\begin{lstlisting}[style=rs]
+// src/portfolio/repository.rs
+fn create_article(&mut self, article: PortfolioItemDto) -> anyhow::Result<()> { todo!() }
+
+// src/job_experience/repository.rs
+fn create_article(&mut self, article: JobExperienceItemDto) -> anyhow::Result<()> { todo!() }
+
+// src/personal_information/repository.rs
+fn create_article(&mut self, article: PersonalInformationDto) -> anyhow::Result<()> { todo!() }
+\end{lstlisting}
+And the compiler is already reporting it, three times over:
+\begin{lstlisting}[style=out]
+$ cargo check --no-default-features --features ssr
+warning: unused variable: `article`
+warning: unused variable: `article`
+warning: unused variable: `article`
+\end{lstlisting}
+\end{verified}
+
+Two separate things went wrong, and they are worth naming separately because only one of them is
+about the trait.
+
+\textbf{The method name is subject-specific.} ``Article'' is publication vocabulary. A portfolio item
+is not an article; neither is a job. The name could not generalise because the \emph{concept} does
+not: what a shared trait can express is \code{create}, and even that is only meaningful when every
+implementor genuinely creates one thing from one DTO.
+
+\textbf{The trait has no shared behaviour left to describe.} \code{get\_all} and \code{get\_by\_id}
+happened to fit all four subjects when they were the only two methods. The third method fits one.
+The fourth --- \code{list\_public()} for portfolio, \code{newest\_first()} for publications,
+\code{by\_slug()} for both --- will fit fewer. There is no interface here, only a coincidence that has
+now expired. Three \code{todo!()}s is what a coincidence looks like when you build on it.
+
+\begin{pattern}[Delete the trait; keep the structs]
+This is a smaller change than it sounds, because the bodies already exist and do not move.
+\begin{lstlisting}[style=rs,caption={\file{src/publications/repository.rs} --- inherent methods, no trait.}]
+impl PublicationsRepository {
+    pub fn new(pool: DbPool) -> Self { Self { pool } }
+
+    // &self, not &mut self -- see below
+    pub async fn list_newest_first(&self) -> Result<Vec<PublicationItem>, RepoError> { /* ... */ }
+    pub async fn by_id(&self, id: i32) -> Result<PublicationItem, RepoError> { /* ... */ }
+    pub async fn upsert_many(&self, items: &[PublicationItemDto]) -> Result<usize, RepoError> { /* ... */ }
+}
+\end{lstlisting}
+Delete \file{src/core/mod.rs}, delete the three \code{todo!()} stubs, and delete
+\code{use crate::core::Repository;} from the four repositories and from
+\file{bin/seed\_publications.rs}. Nothing else changes: \code{AppState} still holds the same four
+types, and the call sites keep working because they were calling methods, not the trait.
+
+Reintroduce a trait only when you have a \emph{second implementation} of the same behaviour --- an
+in-memory fake for tests is the usual first one. A trait with one implementor is a trait you are
+maintaining for free.
+\end{pattern}
+
+\begin{why}[But isn't a repository trait ``good practice''?]
+It is, in languages where the alternative is worse. The pattern comes from ecosystems where you need
+an interface to get dependency injection, mocking, or a runtime-swappable backend. Rust gives you
+the first two through ordinary generics and \code{cfg(test)}, and you do not need the third: there
+is one Postgres.
+
+Rust's own guidance points the same way --- generics exist to make a function usable by more callers,
+not to make a type substitutable in anticipation. And coherence means a generic
+\code{Repository<T>} cannot be specialised per entity anyway, so you write the same number of method
+bodies with worse type inference and worse error messages. The trait was costing you and paying
+nothing, which is why it grew a method that three implementors had to refuse.
+\end{why}
+
+\section{Five local fixes, in the order they will bite}
+
+\subsection{1. \code{\&mut self}, and the clone it is forcing}
+
+The cost is now visible in your own code:
+
+\begin{lstlisting}[style=rs,caption={\file{src/publications/server.rs}}]
+let state: Data<AppState> = extract().await?;
+let mut repo = state.publications_repository.clone();   // <-- cloned only to get `mut`
+let results = repo.get_all().unwrap();
+\end{lstlisting}
+
+That \code{.clone()} is not there for a reason of its own --- it is there because \code{get\_all}
+takes \code{\&mut self} and \code{Data<AppState>} hands out shared references. The trait forces a
+clone at every call site to obtain a mutability nobody needs: \code{Pool::get} takes \code{\&self},
+and no method in any repository mutates anything. Change the receivers to \code{\&self} and the line
+becomes:
+
+\begin{lstlisting}[style=rs]
+let results = state.publications_repository.list_newest_first().await?;
+\end{lstlisting}
+
+Defect \dnum{8}, and it goes away as part of deleting the trait.
+
+\subsection{2. \code{.unwrap()} in a server function}
+
+\code{repo.get\_all().unwrap()} panics the Actix worker thread when the database is unreachable ---
+which is a 500 with no body, no log line, and a poisoned worker, rather than an error the
+\code{ErrorBoundary} could render. In a server function, \code{?} is always available:
+\code{Result<T, ServerFnError>} has a blanket \code{From} for any \code{std::error::Error}. Use it.
+
+\subsection{3. Diesel is still being called on the async runtime}
+
+\code{server.rs} calls \code{repo.get\_all()} directly inside an \code{async fn}. That is the
+blocking bug from Chapter~\ref{ch:blocking}, now live: the query holds an Actix worker thread for its
+whole duration. With twelve workers it is invisible; it is invisible right up until it is not. Wrap
+the query in \code{web::block} inside the repository, with \code{pool.get()} inside the closure.
+
+\subsection{4. The DTO has no serde derives --- and this is the next wall}
+
+\begin{lstlisting}[style=rs,caption={\file{src/publications/dto.rs}}]
+#[derive(Debug, Clone)]          // <-- no Serialize, no Deserialize
+pub struct PublicationItemDto { /* ... */ }
+\end{lstlisting}
+
+This compiles today only because \code{get\_all\_publications} returns \code{Vec<String>}. The moment
+it returns \code{Vec<PublicationItemDto>} --- which is the next thing you will want, since
+\code{Vec<String>} throws away the year, journal and link the page needs --- you will hit two errors
+in sequence:
+
+\begin{enumerate}
+  \item \code{the trait bound `PublicationItemDto: serde::Serialize` is not satisfied}, four times
+    per DTO, with notes mentioning \code{BrowserMockRes} and \code{JsonSerdeCodec}. Add
+    \code{Serialize, Deserialize} to the derive.
+  \item \code{error[E0432]: unresolved import serde} in the \emph{wasm} build --- because
+    \code{serde} is still \code{optional = true} with \code{dep:serde} inside the \code{ssr} feature.
+    Ch.~\ref{ch:boundary} has the two-line \file{Cargo.toml} fix.
+\end{enumerate}
+
+Defect \dnum{6}. Fixing it before you change the return type turns a confusing twenty-minute detour
+into a non-event.
+
+\subsection{5. \code{impl Into<...>} instead of \code{impl From<...>}}
+
+\file{bin/seed\_publications.rs} opens with \code{\#![allow(clippy::from\_over\_into)]}, which is the
+tell. Clippy is right: implement \code{From<Article> for PublicationItemDto} and you get \code{Into}
+generated for free, in both directions of inference, and the \code{allow} disappears. The reason the
+lint exists is that a hand-written \code{Into} does not give you the reciprocal \code{From}, so
+generic code bounded on \code{From} silently will not accept your type.
+
+\section{Two smaller things while you are in the files}
+
+\begin{itemize}
+  \item \textbf{\code{abs} is still \code{abs}.} It is now in three places --- the column, the model,
+    and the DTO --- so the rename costs three edits today and more next week. Defect \dnum{15}.
+  \item \textbf{\code{components.rs} has a redundant import.}
+    \code{use leptos::prelude::*;} followed by \code{use leptos::\{component, view, IntoView\};} ---
+    the prelude already provides all three. Harmless, and worth deleting so the next file you write
+    copies the right pattern.
+\end{itemize}
+
+\section{The revised next step}
+
+Chapter~\ref{ch:roadmap}'s M1 was ``get one slice from Postgres to the screen''. You have done that
+in its rough form, so the remaining work in M1 is to make the same path carry real data:
+
+\begin{runbook}[What to do next, concretely]
+\begin{enumerate}
+  \item Make \code{serde} unconditional in \file{Cargo.toml}, and add
+    \code{Serialize, Deserialize} to all four DTOs. \dnum{6}
+  \item Delete \file{src/core/mod.rs} and the trait; convert the four repositories to inherent
+    methods taking \code{\&self}; delete the three \code{todo!()} stubs. \dnum{8}
+  \item Wrap the queries in \code{web::block}, with \code{pool.get()} inside the closure.
+  \item Change \code{get\_all\_publications} to return \code{Result<Vec<PublicationItemDto>,
+    ServerFnError>}, with \code{?} instead of \code{.unwrap()}.
+  \item Replace \code{ServerButton} with a \code{Resource} $+$ \code{Transition} so the list is
+    server-rendered rather than fetched on click. Keep the button somewhere until then --- it is a
+    genuinely useful hydration test (\S\ref{ch:runcontract}).
+  \item Add \code{external\_id} $+$ \code{UNIQUE}, and make the seeder an upsert, before you run it
+    again. \S\ref{sec:idempotent}
+  \item Extract \file{openalex.rs} and \file{service.rs}; reduce the binary to composition.
+    Ch.~\ref{ch:services}
+\end{enumerate}
+\end{runbook}
+
+Steps 1--4 are perhaps an hour and remove four of the five defects in this chapter. Step 6 is the one
+with a deadline attached: it needs to happen before the next \code{cargo run --bin
+seed\_publications}, or you will be deduplicating rows by hand.

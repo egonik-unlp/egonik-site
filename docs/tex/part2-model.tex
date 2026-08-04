@@ -1,0 +1,695 @@
+% ===========================================================================
+\part{The mental model}
+% ===========================================================================
+
+\chapter{One source tree, two programs}
+\label{ch:twobuilds}
+
+\section{The fact everything else follows from}
+
+\begin{keyidea}
+\file{src/lib.rs} is compiled twice, into two different programs, for two different machines. Every
+module, every struct and every dependency is either in both programs, or in exactly one of them,
+and it is your job --- not the compiler's --- to say which.
+\end{keyidea}
+
+This is the single idea that, once internalised, makes Leptos stop feeling arbitrary. Read
+\file{Cargo.toml} again with it in mind:
+
+\begin{lstlisting}[style=toml,caption={The features that select which program is being built.}]
+[lib]
+crate-type = ["cdylib", "rlib"]   # cdylib -> wasm target; rlib -> so main.rs can `use` it
+
+[features]
+ssr     = ["dep:actix-web", "dep:actix-files", "dep:leptos_actix", "dep:diesel",
+           "dep:serde", "dep:serde_json",
+           "leptos/ssr", "leptos_meta/ssr", "leptos_router/ssr"]
+hydrate = ["leptos/hydrate"]
+csr     = ["leptos/csr"]
+\end{lstlisting}
+
+\code{ssr} and \code{hydrate} are not two configurations of one program. They are the names of the
+two programs. Figure~\ref{fig:twobuilds} shows what \code{cargo leptos build} actually does with
+them.
+
+\begin{diagram}{What \code{cargo leptos build} produces. The same \file{src/lib.rs} is read by both
+compilations; the feature flag decides which parts of it exist.}{fig:twobuilds}
+\begin{tikzpicture}[node distance=5mm]
+  \node[shared,minimum width=32mm] (src) {\textbf{src/lib.rs}\\[1pt]\scriptsize + everything it declares};
+
+  % left branch: server
+  \node[srv,below left=14mm and 12mm of src,minimum width=46mm] (sb)
+    {\code{cargo build --bin egonik-site}\\[1pt]\scriptsize
+     \code{--features ssr --no-default-features}\\\scriptsize target: x86\_64 native};
+  \node[srv,below=7mm of sb,minimum width=46mm] (sout)
+    {\textbf{target/debug/egonik-site}\\[1pt]\scriptsize an executable: Actix + Diesel + your domain};
+
+  % right branch: client
+  \node[cli,below right=14mm and 12mm of src,minimum width=46mm] (cb)
+    {\code{cargo build --lib}\\[1pt]\scriptsize
+     \code{--features hydrate --no-default-features}\\\scriptsize target: wasm32-unknown-unknown};
+  \node[cli,below=7mm of cb,minimum width=46mm] (cbg)
+    {\code{wasm-bindgen}\\[1pt]\scriptsize generates the JS glue};
+  \node[cli,below=7mm of cbg,minimum width=46mm] (cout)
+    {\textbf{target/site/pkg/egonik-site.\{wasm,js\}}\\[1pt]\scriptsize downloaded by the browser};
+
+  \draw[flow] (src.south) -- ++(0,-4mm) -| node[lbl,pos=0.25,above]{\code{ssr}} (sb.north);
+  \draw[flow] (src.south) -- ++(0,-4mm) -| node[lbl,pos=0.25,above]{\code{hydrate}} (cb.north);
+  \draw[flow] (sb) -- (sout);
+  \draw[flow] (cb) -- (cbg);
+  \draw[flow] (cbg) -- (cout);
+
+  \node[box,fill=wash,below=9mm of sout,minimum width=46mm,align=center] (run)
+    {\textbf{the running server}\\[1pt]\scriptsize serves the wasm bundle it was built alongside};
+  \draw[flow] (sout) -- (run);
+  \draw[flow,dashed] (cout.south) |- ++(0,-8mm) -| (run.east);
+\end{tikzpicture}
+\end{diagram}
+
+Two consequences are worth stating explicitly, because both bite in practice.
+
+\textbf{First: a dependency you add is, by default, in both programs.} It is not enough to only
+\emph{use} a crate on the server; if it is listed unconditionally under \code{[dependencies]}, it
+is compiled into the browser bundle too. That is measurable in the current code.
+
+\begin{verified}[Verified: what is actually in the wasm bundle today]
+\begin{lstlisting}[style=out]
+$ cargo tree --target wasm32-unknown-unknown --no-default-features \
+             --features hydrate --depth 1
+egonik-site v0.1.0
+|-- anyhow v1.0.104
+|-- chrono v0.4.45
+|-- console_error_panic_hook v0.1.7
+|-- dotenvy v0.15.7          <-- reads .env files. In a browser.
+|-- leptos v0.8.20
+|-- leptos_meta v0.8.6
+|-- leptos_router v0.8.15
+`-- wasm-bindgen v0.2.126
+\end{lstlisting}
+\end{verified}
+
+\code{dotenvy} in a WebAssembly bundle is not merely wasteful, it is nonsensical: it exists to read
+a file from a filesystem the browser does not have. \code{anyhow} is server-side error plumbing.
+\code{chrono} is genuinely needed on both sides if dates are rendered --- but only its
+serialisation and formatting parts, not its system-clock parts. These are defects
+\dnum{9} and \dnum{10}.
+
+\textbf{Second: \code{\#[cfg(feature = "ssr")]} is a scalpel, and it is currently being used as a
+tourniquet.} Look at what \file{src/lib.rs} does:
+
+\begin{lstlisting}[style=rs]
+#[cfg(feature = "ssr")] pub mod core;
+#[cfg(feature = "ssr")] pub mod database;
+#[cfg(feature = "ssr")] pub mod job_experience;
+#[cfg(feature = "ssr")] pub mod personal_information;
+#[cfg(feature = "ssr")] pub mod portfolio;
+#[cfg(feature = "ssr")] pub mod publications;
+#[cfg(feature = "ssr")] pub mod schema;
+\end{lstlisting}
+
+Gating \code{database} and \code{schema} is correct and necessary --- Diesel must never reach the
+browser. But gating the entire \code{portfolio}, \code{publications}, \code{job\_experience} and
+\code{personal\_information} modules means the \emph{types describing your content} exist only on the
+server. Chapter~\ref{ch:boundary} shows why that becomes a wall the moment you write your first
+server function, and Chapter~\ref{ch:dto} gives the split that removes it.
+
+\begin{why}[Why this gate was added, and why that was reasonable]
+The gate is almost certainly there because without it the wasm build failed. It \emph{would} have:
+the models derive \code{Serialize}, \code{Queryable} and \code{Selectable}, and none of those
+derive macros are available in the \code{hydrate} build. Adding the gate made the error go away.
+The problem is that it made the error go away by removing the types from the client entirely,
+which is the opposite of what you will need. The right fix separates the Diesel-flavoured struct
+from the wire-flavoured struct, rather than hiding both.
+\end{why}
+
+\section{Reading a \code{cfg} error correctly}
+
+When either build breaks, the first diagnostic question is always \emph{which of the two programs
+is failing?} \code{cargo leptos} interleaves both, so the output can be confusing. Check them
+independently:
+
+\begin{lstlisting}[style=sh]
+# program 1: the server
+cargo check --no-default-features --features ssr
+
+# program 2: the browser
+cargo check --lib --no-default-features --features hydrate \
+            --target wasm32-unknown-unknown
+\end{lstlisting}
+
+\begin{verified}[Verified: both programs compile today]
+Both commands complete successfully against the current tree --- the server in 18.5\,s, the wasm
+library in 59.3\,s from a warm cache. Keep it that way; make these two commands the definition of
+``it builds''.
+\end{verified}
+
+\begin{pattern}[Make the two-build check a habit]
+Before every commit, run both commands. A change that satisfies \code{cargo leptos watch} can
+still have broken the other target, because \code{watch} may not have rebuilt it yet. This is also
+the single most valuable thing to put in CI --- see Chapter~\ref{ch:ops}.
+\end{pattern}
+
+\section{A note on the \code{csr} feature}
+
+\file{Cargo.toml} also defines \code{csr}, and \file{src/main.rs} carries two extra \code{main}
+functions to support it. Client-side rendering means shipping an empty HTML shell and letting the
+wasm bundle build the whole page --- no server rendering at all. It is useful for testing
+components under \code{trunk serve}, and useless for a personal website, where server rendering is
+the entire point (search engines, first-paint speed, working without JavaScript).
+
+You have three configurations to keep straight and only two that you use. Deleting \code{csr}
+from \file{Cargo.toml} and removing the two dead \code{main} functions from \file{src/main.rs}
+costs ten minutes and permanently shrinks the space of states you have to reason about. This is
+recorded as defect \dnum{20}, at low severity, because it is housekeeping rather than a fault.
+
+% ===========================================================================
+\chapter{The life of a request}
+\label{ch:lifecycle}
+
+Understanding \emph{when} your code runs is what allows you to place it correctly. A Leptos
+component function may execute on the server, in the browser, or both, and it will do different
+things in each case. This chapter follows four distinct journeys through the system.
+
+\section{Journey 1: a cold page load}
+
+Someone types your URL. Nothing is cached. Figure~\ref{fig:cold} traces what happens.
+
+\begin{diagram}{A cold page load. Note that your component function runs \emph{twice} --- once on the
+server at step 4, once in the browser at step 9 --- and that the data fetched at step 5 is
+serialised into the HTML so the browser does not have to fetch it again.}{fig:cold}
+\begin{tikzpicture}[x=1mm,y=1mm]
+  \def\lh{106}
+  % lanes
+  \foreach \x/\nm/\st in {0/Browser/cli, 34/Actix/srv, 68/Leptos (ssr)/srv, 100/Repository/srv, 130/Postgres/srv} {
+    \node[\st,minimum width=22mm,anchor=north,inner sep=3pt] at (\x,0) {\textbf{\nm}};
+    \draw[draw=rule,line width=0.6pt,dashed] (\x,-9) -- (\x,-\lh);
+  }
+  % steps
+  \def\stp#1#2#3#4{\draw[flowa] (#1,#3) -- (#2,#3) node[lbl,midway,above=0.3mm]{#4};}
+  \stp{0}{34}{-17}{1. \code{GET /}}
+  \stp{34}{68}{-26}{2. no static match $\rightarrow$ \code{leptos\_routes}}
+  \node[lbl,anchor=west,align=left] at (70,-34) {3. match the route in \code{<Routes>}};
+  \node[lbl,anchor=west,align=left] at (70,-41) {4. \textbf{run your component} $\rightarrow$ it hits a \code{Resource}};
+  \stp{68}{100}{-49}{5. server fn body runs \emph{in-process}}
+  \stp{100}{130}{-57}{6. SQL}
+  \draw[flow] (130,-64) -- (100,-64) node[lbl,midway,above=0.3mm]{rows};
+  \draw[flow] (100,-71) -- (68,-71) node[lbl,midway,above=0.3mm]{7. \code{Vec<Dto>}};
+  \node[lbl,anchor=west,align=left] at (70,-78) {8. render HTML \emph{and} embed the DTOs as JSON};
+  \draw[flow] (68,-86) -- (34,-86);
+  \draw[flow] (34,-86) -- (0,-86) node[lbl,midway,above=0.3mm]{HTML $+$ payload};
+  \node[lbl,anchor=west,align=left] at (2,-93) {9. paint, then fetch the wasm, then \textbf{hydrate}};
+  \node[lbl,anchor=west,align=left] at (2,-100) {10. the \code{Resource} reads the embedded JSON --- \emph{no second request}};
+\end{tikzpicture}
+\end{diagram}
+
+Three details in that figure carry real weight.
+
+\textbf{At step 5, the server function is not an HTTP call.} When a \code{\#[server]} function is
+invoked during server rendering, Leptos calls the function body directly, in the same process, on
+the same request. There is no localhost round trip. This is why a server function is cheap during
+SSR and why it is safe to have several of them on one page.
+
+\textbf{At step 8, the data is serialised into the HTML.} This is the mechanism that makes
+hydration fast, and it is also the reason your DTOs must implement \code{Serialize} on the server
+\emph{and} \code{Deserialize} in the browser. Not one or the other --- both, in the same type, in
+both builds. Chapter~\ref{ch:boundary} is entirely about this constraint.
+
+\textbf{At step 9, the page is already visible before the wasm arrives.} Server-rendered HTML is
+real HTML. If the wasm bundle fails to download, the visitor still sees your content; they just
+cannot interact with anything that requires reactivity. For a personal website that is a very good
+failure mode, and it is worth preserving deliberately by keeping content in server-rendered markup
+rather than fetching it client-side after load.
+
+\section{Journey 2: navigating to a second page}
+
+The visitor clicks a link to \code{/portfolio}. Now the wasm bundle is loaded and Leptos is in
+control.
+
+\begin{diagram}{Client-side navigation. Actix serves no HTML at all; only the server function is
+called, and only the data crosses the network.}{fig:warm}
+\begin{tikzpicture}[x=1mm,y=1mm]
+  \foreach \x/\nm/\st in {0/Browser (wasm)/cli, 46/Actix/srv, 88/server fn body/srv, 126/Postgres/srv} {
+    \node[\st,minimum width=26mm,anchor=north,inner sep=3pt] at (\x,0) {\textbf{\nm}};
+    \draw[draw=rule,line width=0.6pt,dashed] (\x,-9) -- (\x,-62);
+  }
+  \node[lbl,anchor=west,align=left] at (2,-16) {1. the click is intercepted; \code{history.pushState}};
+  \node[lbl,anchor=west,align=left] at (2,-23) {2. the new route's component runs \textbf{in the browser}};
+  \draw[flowa] (0,-31) -- (46,-31) node[lbl,midway,above=0.3mm]{3. \code{POST} to the generated endpoint};
+  \draw[flowa] (46,-38) -- (88,-38);
+  \draw[flow] (88,-45) -- (126,-45) node[lbl,midway,above=0.3mm]{SQL};
+  \draw[flow] (126,-52) -- (88,-52);
+  \draw[flow] (88,-59) -- (0,-59) node[lbl,pos=0.6,above=0.3mm]{4. serialised \code{Vec<Dto>} --- no HTML at all};
+\end{tikzpicture}
+\end{diagram}
+
+The same component function you wrote for journey 1 now runs in WebAssembly, and the same
+\code{\#[server]} function you called now performs an HTTP request instead of a direct call. You
+did not write two versions of anything. That is the payoff of the two-build model, and it is why
+the discipline it demands is worth accepting.
+
+\section{Journey 3: no JavaScript at all}
+
+If the visitor has JavaScript disabled, or the bundle 404s, journey 1 still completes through
+step 8. They get a fully rendered page. Forms submitted through Leptos's \code{<ActionForm>} even
+continue to work, because they degrade to ordinary HTML form posts.
+
+\begin{pattern}[Design for the no-wasm case first]
+Render content on the server. Use reactivity for interaction, not for content delivery. A personal
+website whose text only appears after 400\,KB of WebAssembly has loaded is strictly worse than one
+whose text is in the HTML --- for readers, for search engines, and for you when you are debugging.
+\end{pattern}
+
+\section{Journey 4: a write}
+
+You do not have writes yet, so this is the shape to aim for rather than a description of
+existing behaviour. A write is a server function that mutates, wrapped in an \code{Action} rather
+than a \code{Resource}:
+
+\begin{itemize}
+  \item a \code{Resource} is for \emph{reading}: it runs automatically when its inputs change, and
+    its result is serialised into SSR output;
+  \item an \code{Action} is for \emph{writing}: it runs when you tell it to, exactly once per
+    dispatch, and never runs during server rendering.
+\end{itemize}
+
+Getting this pairing wrong is a classic Leptos error --- a mutation inside a \code{Resource} will
+fire during server rendering and again on hydration, and you will insert two rows. Keep the rule:
+\textbf{reads are Resources, writes are Actions.}
+
+\section{Where the current code sits in these journeys}
+
+Nowhere, yet, and that is the point of the chapter. \file{src/app.rs} has a \code{RwSignal}
+counter, which participates only in journey 2, and only in the browser. There is no
+\code{Resource}, so no data is fetched at step 5; no server function, so nothing is registered at
+step 3 of journey 2; and no \code{provide\_context}, so nothing the repositories need would be
+reachable if there were. Chapter~\ref{ch:composition} wires it, and
+Chapter~\ref{ch:loading} writes the first \code{Resource}.
+
+% ===========================================================================
+\chapter{The boundary: what may enter the browser}
+\label{ch:boundary}
+
+\section{The rule}
+
+\begin{keyidea}
+A type that crosses between server and browser must compile in \emph{both} programs, must derive
+\code{Serialize} and \code{Deserialize} in \emph{both} programs, and must not transitively depend
+on anything server-only. A type that does not cross must be unavailable to the browser
+\emph{on purpose}.
+\end{keyidea}
+
+Figure~\ref{fig:boundary} draws the boundary. The left column is server-only, the right is shared,
+and the seam between them is where DTOs live.
+
+\begin{diagram}{The boundary. Everything on the left is invisible to the browser by construction;
+everything in the middle column is compiled into both programs and must therefore be free of
+server-only dependencies.}{fig:boundary}
+\begin{tikzpicture}[node distance=4mm]
+  % server column
+  \node[srv,minimum width=40mm] (r) {\code{diesel::table!} schema};
+  \node[srv,minimum width=40mm,below=of r] (m) {Diesel models\\\scriptsize \code{Queryable}, \code{Selectable}};
+  \node[srv,minimum width=40mm,below=of m] (rep) {repositories\\\scriptsize the pool, SQL, \code{r2d2}};
+  \node[srv,minimum width=40mm,below=of rep] (dom) {domain rules, validation};
+  \node[srv,minimum width=40mm,below=of dom] (cfg) {config, secrets, \code{dotenvy}};
+
+  % shared column
+  \node[shared,text width=34mm,right=24mm of m] (dto) {\textbf{DTOs}\\\scriptsize plain structs\\\scriptsize \code{Serialize + Deserialize}};
+  \node[shared,text width=34mm,below=8mm of dto] (sig) {server-fn signatures\\\scriptsize \code{\#[server] fn}\\\scriptsize \code{-> Result<Dto>}};
+  \node[shared,text width=34mm,below=8mm of sig] (err) {error enum\\\scriptsize the parts the UI shows};
+
+  % client column
+  \node[cli,text width=32mm,right=22mm of dto] (comp) {components, \code{view!}};
+  \node[cli,text width=32mm,below=8mm of comp] (res) {\code{Resource}, \code{Action}};
+  \node[cli,text width=32mm,below=8mm of res] (fmt) {formatting, \code{chrono} display};
+
+  % seam: a vertical line midway between the server and shared columns,
+  % spanning the full height of the server column plus a little margin
+  \coordinate (sx)   at ($(m.east)!0.5!(dto.west)$);
+  \coordinate (stop) at ($(sx |- r.north)   + (0, 8mm)$);
+  \coordinate (sbot) at ($(sx |- cfg.south) + (0,-12mm)$);
+  \draw[seam] (stop) -- (sbot)
+    node[pos=0.45,fill=white,inner sep=2pt,rotate=90,
+         font=\sffamily\scriptsize\bfseries,text=crimson]{the boundary};
+
+  \draw[flow] (m) -- node[lbl,above]{\code{From}} (dto);
+  \draw[flow] (dto) -- (comp);
+  \draw[flow] (sig) -- (res);
+
+  \begin{scope}[on background layer]
+    \node[lane,fit=(r)(cfg),inner sep=3mm,label={[tag]below:server build only (\code{ssr})}] {};
+    \node[lane,fit=(dto)(err),inner sep=3mm,label={[tag]below:both builds}] {};
+    \node[lane,fit=(comp)(fmt),inner sep=3mm,label={[tag]below:runs in the browser}] {};
+  \end{scope}
+\end{tikzpicture}
+\end{diagram}
+
+\section{The failure you are going to hit}
+
+This is not hypothetical, so it is worth showing exactly. Suppose you decide to return your
+existing model straight from a server function --- the obvious first attempt:
+
+\begin{lstlisting}[style=rs]
+// the natural thing to write, and it cannot work
+#[server]
+pub async fn list_publications() -> Result<Vec<PublicationItem>, ServerFnError> { ... }
+\end{lstlisting}
+
+Two things break at once.
+
+\textbf{The type does not exist in the browser build.} \code{PublicationItem} lives in
+\file{src/publications/model.rs}, and \file{src/lib.rs} gates that module on \code{ssr}. The
+\code{hydrate} build has never heard of it, and the \code{\#[server]} macro needs the signature to
+compile on \emph{both} sides --- it generates the client stub from the same declaration.
+
+\textbf{And \code{serde} is not available in the browser build either.} \code{serde} is declared
+\code{optional = true} and enabled only by the \code{ssr} feature. Remove the module gate and you
+trade one error for another:
+
+\begin{verified}[Verified: the exact error, reproduced]
+A struct deriving \code{serde::Serialize} was added to the crate root without a \code{cfg} gate,
+and the client program was compiled:
+\begin{lstlisting}[style=out]
+$ cargo check --lib --no-default-features --features hydrate \
+              --target wasm32-unknown-unknown
+error[E0432]: unresolved import `serde`
+error: could not compile `egonik-site` (lib) due to 1 previous error
+\end{lstlisting}
+The file was then removed and the tree restored. This is defect \dnum{6}.
+\end{verified}
+
+\begin{pitfall}[The confusing part]
+\code{serde} \emph{is} physically compiled into the wasm build --- Leptos depends on it. But
+because your crate declares it as an optional dependency that only \code{ssr} enables, \emph{your}
+code is not permitted to name it. The crate is present and the path is unresolvable. That is why
+the error message is \code{unresolved import} rather than something about a missing dependency,
+and it is why the fix is in \file{Cargo.toml}, not in the \code{use} statement.
+\end{pitfall}
+
+\section{The fix, in two lines of \code{Cargo.toml}}
+
+\begin{lstlisting}[style=toml,caption={\code{serde} becomes unconditional; the server-only crates stay optional.}]
+[dependencies]
+serde = { version = "1", features = ["derive"] }         # both programs need it
+serde_json = { version = "1", optional = true }          # server only, unless you need it client-side
+chrono = { version = "0.4", features = ["serde"], default-features = false }
+diesel = { version = "2.3", optional = true, features = [...] }
+dotenvy = { version = "0.15", optional = true }           # <-- make optional
+anyhow  = { version = "1",    optional = true }           # <-- make optional
+
+[features]
+ssr = ["dep:actix-web", "dep:actix-files", "dep:leptos_actix", "dep:diesel",
+       "dep:serde_json", "dep:dotenvy", "dep:anyhow",
+       "leptos/ssr", "leptos_meta/ssr", "leptos_router/ssr"]
+\end{lstlisting}
+
+\code{serde} is a small crate and is already in the bundle; making it unconditional costs nothing
+and removes an entire category of error. \code{dotenvy} and \code{anyhow} move the other way ---
+into \code{ssr} --- which is defect \dnum{9}'s fix and shrinks the wasm bundle.
+
+Note the \code{chrono} line. Dates \emph{do} need to cross the boundary --- a publication year, an
+employment period --- so \code{chrono} must stay unconditional, but with
+\code{default-features = false} it drops the parts that want a system clock and a timezone
+database, which is most of its weight. Keep \code{features = ["serde"]} so \code{NaiveDate}
+serialises.
+
+\section{The checklist}
+
+Before adding any type or dependency, ask in order:
+
+\begin{enumerate}
+  \item \textbf{Does this need to be visible to a component?} If no, gate it on \code{ssr} and
+    stop. Most things stop here: queries, the pool, migrations, secrets.
+  \item \textbf{Does it need to travel over the wire?} If yes, it is a DTO. It goes in the
+    ungated \file{src/dto/} module, derives \code{Serialize + Deserialize}, and contains
+    \emph{only} primitives, \code{String}, \code{Option}, \code{Vec} and other DTOs --- plus
+    \code{NaiveDate}, which is fine.
+  \item \textbf{Does it pull in a crate?} Check the crate compiles for
+    \code{wasm32-unknown-unknown} and does not want the filesystem, threads, or a socket. When in
+    doubt, run the two-build check from Chapter~\ref{ch:twobuilds}.
+\end{enumerate}
+
+\begin{antipattern}[Reaching for \code{cfg} to silence an error]
+When the wasm build complains about a type, the tempting fix is \code{\#[cfg(feature = "ssr")]}.
+Sometimes that is right --- but if the type is something a page needs to display, the \code{cfg}
+is postponing the problem, not solving it. The question to ask is not ``how do I hide this from
+the client'' but ``does the client need this shape, and if so what should that shape be?'' The
+answer to the second question is a DTO, which is Chapter~\ref{ch:dto}.
+\end{antipattern}
+
+\section{A per-dependency verdict for this \file{Cargo.toml}}
+
+The checklist above is general. Here it is applied to every dependency currently declared, because
+four of the eleven are on the wrong side and two are not used at all.
+
+\begin{table}[htbp]
+\centering
+\caption{Every declared dependency, and where it belongs.}
+\label{tab:deps}
+\small
+\begin{tabular}{@{}L{0.20\textwidth}L{0.15\textwidth}L{0.15\textwidth}L{0.42\textwidth}@{}}
+\toprule
+\textbf{Crate} & \textbf{Declared} & \textbf{Should be} & \textbf{Why} \\
+\midrule
+\code{leptos}, \code{leptos\_meta}, \code{leptos\_router} & both & \textcolor{moss}{both} & the
+framework; each has its own \code{ssr} feature \\
+\code{actix-web}, \code{actix-files}, \code{leptos\_actix} & \code{ssr} & \textcolor{moss}{\code{ssr}} & correct \\
+\code{diesel} & \code{ssr} & \textcolor{moss}{\code{ssr}} & correct, and mandatory: the
+\code{postgres} feature links native \code{libpq} \\
+\code{serde} & \textbf{\code{ssr}} & \textcolor{crimson}{\textbf{both}} & \dnum{6}. Wire types must
+serialise in the browser \\
+\code{serde\_json} & \code{ssr} & \textcolor{crimson}{delete} & used nowhere in \file{src/} \\
+\code{http} & optional, \emph{no feature} & \textcolor{crimson}{delete} & enabled by nothing,
+used by nothing \\
+\code{chrono} & both & \textcolor{amber}{both, trimmed} & \dnum{10}. Dates do cross; add
+\code{default-features = false} \\
+\code{dotenvy} & both & \textcolor{crimson}{\code{ssr}} & \dnum{9}. Reads \file{.env} from a
+filesystem the browser has not got \\
+\code{anyhow} & both & \textcolor{crimson}{\code{ssr}} & \dnum{9}. Server-side error plumbing \\
+\code{wasm-bindgen} & both & \textcolor{amber}{\code{hydrate}} & needed only by
+\code{pub fn hydrate()}; currently also compiled natively \\
+\code{console\_error\_panic\_hook} & both & \textcolor{amber}{\code{hydrate}} & browser-only ---
+see the next chapter for why it matters \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{verified}[Verified: two of these are entirely dead]
+\begin{lstlisting}[style=out]
+$ grep -n 'http' Cargo.toml
+13:http = { version = "1.3.1", optional = true }     <-- in no feature list
+$ grep -rn 'http::' src/
+src/app.rs:60: resp.set_status(actix_web::http::StatusCode::NOT_FOUND);   <-- actix's, not this one
+$ grep -rn 'serde_json' src/
+  (no output)
+\end{lstlisting}
+Both declarations can go. \code{http} in particular is invisible: because no feature enables it,
+it is never compiled, so it produces no warning and no build cost --- just a line that implies a
+dependency you do not have. These are defects \dnum{34} and \dnum{35}.
+\end{verified}
+
+% ===========================================================================
+\chapter{The run contract, and how to tell hydration happened}
+\label{ch:runcontract}
+
+\section{Why the binary behaves differently from \code{cargo leptos watch}}
+
+\begin{keyidea}
+The compiled server binary is not self-contained. It reads its own configuration from
+\code{LEPTOS\_*} environment variables at startup, and \code{cargo leptos} sets them for you. Run
+the binary yourself without them and you get a site that renders perfectly and never becomes
+interactive.
+\end{keyidea}
+
+This is the single most confusing failure available in this stack, because every visible signal says
+the application is fine. It is worth showing exactly, since you will meet it the first time you run
+the binary directly or put it in a container.
+
+\begin{verified}[Verified: running \file{target/debug/egonik-site} with no \code{LEPTOS\_*} variables]
+The binary prints its own warning, and then serves a page:
+\begin{lstlisting}[style=out]
+$ env -u LEPTOS_OUTPUT_NAME -u LEPTOS_SITE_ROOT ./target/debug/egonik-site
+It looks like you're trying to compile Leptos without the LEPTOS_OUTPUT_NAME environment
+variable being set. There are two options
+ 1. cargo-leptos is not being used, but get_configuration() is being passed None. This
+    needs to be changed to Some("Cargo.toml")
+ 2. You are compiling Leptos without LEPTOS_OUTPUT_NAME being set with cargo-leptos.
+    This shouldn't be possible!
+listening on http://127.0.0.1:3000
+\end{lstlisting}
+
+And here is what that page contains:
+\begin{lstlisting}[style=out]
+$ curl -s localhost:3000/ | grep -oE '(src|href)="/pkg/[^"]*"'
+href="/pkg/_bg.wasm"                 <-- the output name is EMPTY
+href="/pkg/egonik-site.css"          <-- but this one is hardcoded in app.rs, so it works
+href="/pkg/.js"                      <-- and this one is broken
+
+$ curl -s -o /dev/null -w '%{http_code}' localhost:3000/pkg/.js
+400
+
+$ curl -s localhost:3000/ | grep -o 'Click Me[^<]*'
+Click Me:                            <-- the HTML is complete and correct
+\end{lstlisting}
+\end{verified}
+
+Read that carefully, because the shape of the failure is the lesson. The server-rendered HTML is
+complete. The stylesheet loads --- because \file{app.rs} hardcodes
+\code{href="/pkg/egonik-site.css"} rather than deriving it. So the page \emph{looks entirely
+correct} in a browser and in view-source. Only the WebAssembly is missing, so nothing is
+interactive: the counter button does nothing, and no error appears anywhere except a 400 in the
+network tab for a file called \code{.js}.
+
+\begin{pitfall}[The two options in that warning message, and which one you want]
+The message offers two remedies. Take neither at face value.
+
+Option 1 --- ``pass \code{Some("Cargo.toml")} to \code{get\_configuration}'' --- makes the running
+binary read \file{Cargo.toml} from disk at startup. It works in your source tree and fails in any
+container that ships only the binary and the site directory. Do not do this.
+
+The right answer is to \textbf{set the environment variables}, which is what \code{cargo leptos}
+does in development and what your \file{Dockerfile} must do in production:
+\begin{lstlisting}[style=sh]
+LEPTOS_OUTPUT_NAME=egonik-site \
+LEPTOS_SITE_ROOT=target/site \
+LEPTOS_SITE_PKG_DIR=pkg \
+LEPTOS_ENV=PROD \
+./target/release/egonik-site
+\end{lstlisting}
+With \code{LEPTOS\_OUTPUT\_NAME} set, the link becomes \code{/pkg/egonik-site.js} and returns 200.
+\end{pitfall}
+
+\begin{table}[htbp]
+\centering
+\caption{Symptoms of a missing runtime variable. None of these produce a Rust error.}
+\label{tab:runtimeenv}
+\small
+\begin{tabular}{@{}L{0.25\textwidth}L{0.30\textwidth}L{0.38\textwidth}@{}}
+\toprule
+\textbf{Variable} & \textbf{If unset} & \textbf{Symptom} \\
+\midrule
+\code{LEPTOS\_OUTPUT\_NAME} & bundle name is empty & \code{/pkg/.js} $\rightarrow$ 400; page
+renders, never hydrates \\
+\code{LEPTOS\_SITE\_ROOT} & defaults to \code{"."} & static files 404; page renders unstyled \\
+\code{LEPTOS\_SITE\_ADDR} & \code{127.0.0.1:3000} & in a container: unreachable from outside.
+Set \code{0.0.0.0:8080} \\
+\code{LEPTOS\_ENV} & \code{DEV} & the live-reload client is injected and retries
+\code{localhost:3001} forever \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\section{How to tell whether hydration actually happened}
+
+Because a non-hydrating page looks identical to a working one, you need a deliberate test. Three
+checks, cheapest first:
+
+\begin{enumerate}
+  \item \textbf{Does \code{/pkg/<output-name>.js} return 200?} If not, nothing else matters. This is
+    the check that catches the entire failure above, and it is one \code{curl}.
+  \item \textbf{Does an interactive element work?} The starter template's counter is genuinely
+    useful for this, which is a reason to keep something clickable on the page until you have real
+    interaction. If the button increments, the wasm loaded and took over.
+  \item \textbf{Is the browser console clean?} Which brings us to the panic hook.
+\end{enumerate}
+
+\begin{why}[What \code{console\_error\_panic\_hook} is actually for]
+\file{src/lib.rs} calls \code{console\_error\_panic\_hook::set\_once()} inside \code{hydrate()}.
+Without it, a panic in WebAssembly aborts with the message \code{unreachable executed} and no
+indication of where. With it, you get the real panic message and a stack trace in the browser
+console.
+
+This is not optional infrastructure --- it is the only diagnostic you have on the client side.
+Keep the call, and make ``check the console'' part of how you verify a page, because a hydration
+panic silently leaves the page in the same non-interactive state as a missing bundle.
+\end{why}
+
+\section{The component body runs twice, and that has consequences}
+
+From Chapter~\ref{ch:lifecycle}: on a cold load your component function executes on the server, and
+then again in the browser during hydration. Leptos requires that both executions produce the
+\emph{same} markup. If they differ, hydration mismatches --- the framework attaches event listeners
+to the wrong nodes, and behaviour becomes inexplicable.
+
+\begin{antipattern}[Anything non-deterministic inside a \code{view!}]
+\begin{lstlisting}[style=rs]
+// renders one time on the server, a different time in the browser
+view! { <p>"Rendered at " {chrono::Local::now().to_string()}</p> }
+
+// a different value on each of the two runs
+view! { <li id=format!("item-{}", rand::random::<u32>())>...</li> }
+\end{lstlisting}
+Both compile. Both produce a mismatch. Anything time-dependent or random must either be computed
+once on the server and passed through as data, or computed only on the client inside an
+\code{Effect}, which does not run during server rendering.
+\end{antipattern}
+
+\begin{pitfall}[\code{chrono::Local} needs a timezone the browser will not agree about]
+This is a live risk for this project, because \code{chrono} is compiled into both builds and the
+schema is full of dates. \code{Local::now()} resolves against the machine's timezone --- the
+server's timezone on one run, the visitor's on the other. Format dates on the server, or format
+them from a \code{NaiveDate} with no timezone involved at all, which is what every date column in
+this schema already is.
+\end{pitfall}
+
+\section{Where the assets actually end up}
+
+One more piece of the run contract, and a genuinely surprising one. \file{Cargo.toml} says
+\code{assets-dir = "assets"}. The contents of that directory are copied \emph{into the root of the
+site directory}, not into a subdirectory named \code{assets}.
+
+\begin{verified}
+\begin{lstlisting}[style=out]
+$ find target/site -maxdepth 2
+target/site
+target/site/favicon.ico          <-- assets/favicon.ico landed at the ROOT
+target/site/pkg
+target/site/pkg/egonik-site.wasm
+target/site/pkg/egonik-site.js
+target/site/pkg/egonik-site.css
+
+$ curl -s -o /dev/null -w '%{http_code}' localhost:3000/favicon.ico
+200
+\end{lstlisting}
+\end{verified}
+
+So a file you place at \file{assets/media/me.jpg} is served at \textbf{\code{/media/me.jpg}} --- not
+at \code{/assets/media/me.jpg}. This matters concretely: \code{personal\_informations.image\_url}
+is a column you are about to fill in, and the intuitive value is the wrong one.
+
+\begin{pitfall}[And \code{/assets/} currently serves the entire site root]
+\file{main.rs} contains \code{Files::new("/assets", \&site\_root)} --- note that the second argument
+is the site root, not the assets directory. So the URL prefix \code{/assets} is mapped onto
+everything.
+\begin{lstlisting}[style=out]
+$ curl -s -o /dev/null -w '%{http_code} %{size_download}' \
+       localhost:3000/assets/pkg/egonik-site.wasm
+200 2874275
+\end{lstlisting}
+Every file is reachable by two different URLs. Nothing under \file{target/site} is secret, so this
+is not an information leak --- but two URLs for one resource is bad for caching and confusing to
+debug. It is inherited from the upstream template. Defect \dnum{18}.
+\end{pitfall}
+
+\section{The check that proves nothing}
+
+A closing warning for this part, because it undermines the habit recommended in
+Chapter~\ref{ch:twobuilds} if you get it wrong.
+
+\begin{verified}[Verified: a bare \code{cargo check} compiles neither program]
+\begin{lstlisting}[style=out]
+$ cargo check --no-default-features
+    Finished `dev` profile [unoptimized + debuginfo] target(s)
+\end{lstlisting}
+It succeeds --- and it has checked \emph{neither} the server nor the browser build. With no features
+enabled, \code{leptos} has no renderer, every server module is \code{cfg}'d out, and
+\file{main.rs} falls through to its \code{\#[cfg(not(any(feature = "ssr", feature = "csr")))]} stub,
+which is an empty \code{fn main()}.
+\end{verified}
+
+A green \code{cargo check} in this repository is therefore meaningless unless it names a feature.
+Always both, always explicitly:
+
+\begin{lstlisting}[style=sh]
+cargo check --no-default-features --features ssr
+cargo check --lib --no-default-features --features hydrate --target wasm32-unknown-unknown
+\end{lstlisting}

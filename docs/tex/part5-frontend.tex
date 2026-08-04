@@ -1,0 +1,585 @@
+% ===========================================================================
+\part{The front end}
+% ===========================================================================
+
+\chapter{Pages, routes, and layout}
+\label{ch:pages}
+
+\section{Decide the URLs before you write the components}
+
+URLs are the part of a website that is hardest to change later, because other people's links point
+at them. They are also the cheapest thing to get right today, since there are none yet apart from
+\code{/}.
+
+\begin{table}[htbp]
+\centering
+\caption{A route plan for this site. The \code{:slug} routes are the reason
+Chapter~\ref{ch:datamodel} argues for a \code{slug} column.}
+\label{tab:routes}
+\small
+\begin{tabular}{@{}L{0.24\textwidth}L{0.30\textwidth}L{0.40\textwidth}@{}}
+\toprule
+\textbf{Path} & \textbf{Reads from} & \textbf{Note} \\
+\midrule
+\code{/} & \code{people}, \code{contact\_links} & who you are; the only page that must load fast \\
+\code{/portfolio} & \code{portfolio\_items} + tags & the list; filterable by tag \\
+\code{/portfolio/:slug} & one \code{portfolio\_item} & the detail page; must 404 properly \\
+\code{/publications} & \code{publication\_items} & grouped by year, newest first \\
+\code{/experience} & \code{job\_experiences} + institutions & the CV, reverse chronological \\
+\code{/tags/:slug} & join table & optional; only if tags earn a page of their own \\
+\code{*any} & --- & 404, with a real 404 status \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{pattern}[Slugs, not integers]
+\code{/portfolio/egonik-site} is a URL you can put in a CV. \code{/portfolio/7} is a URL that
+changes meaning if you ever re-seed the database. Add the \code{slug} column in the same migration
+that fixes defect \dnum{1}, before there is any content to migrate.
+\end{pattern}
+
+\section{Layout: one shell, many pages}
+
+Every page shares a header, navigation and footer. Leptos expresses that with a nested route: a
+parent route renders the shell and an \code{<Outlet/>}, and the children render into it.
+
+\begin{diagram}{The route tree. \code{ParentRoute} renders the shell once; only the
+\code{<Outlet/>} contents change on navigation, so the header is never re-rendered and never
+flashes.}{fig:routes}
+\begin{tikzpicture}[node distance=4mm]
+  \node[shared,minimum width=54mm] (shell) {\code{<ParentRoute path="" view=Shell/>}\\[1pt]\scriptsize
+    header $+$ nav $+$ \code{<Outlet/>} $+$ footer};
+  \node[cli,minimum width=40mm,below left=11mm and 22mm of shell] (home) {\code{path=""}\\\scriptsize \code{<HomePage/>}};
+  \node[cli,minimum width=40mm,below=11mm of shell] (port) {\code{path="portfolio"}\\\scriptsize \code{<PortfolioList/>}};
+  \node[cli,minimum width=40mm,below right=11mm and 22mm of shell] (pubs) {\code{path="publications"}\\\scriptsize \code{<Publications/>}};
+  \node[cli,minimum width=40mm,below=8mm of port] (det) {\code{path="portfolio/:slug"}\\\scriptsize \code{<PortfolioDetail/>}};
+  \node[box,fill=wash,minimum width=40mm,below=8mm of pubs] (nf) {\code{WildcardSegment}\\\scriptsize \code{<NotFound/>} $+$ status 404};
+
+  \draw[flow] (shell) -- (home);
+  \draw[flow] (shell) -- (port);
+  \draw[flow] (shell) -- (pubs);
+  \draw[flow] (shell.south) ++(0,-2mm) -- (det.north);
+  \draw[flow] (shell) -- (nf);
+\end{tikzpicture}
+\end{diagram}
+
+\begin{lstlisting}[style=rs,caption={\file{src/app.rs} --- the whole file, and it should stay roughly this size.}]
+use leptos::prelude::*;
+use leptos_meta::{provide_meta_context, Meta, Stylesheet, Title};
+use leptos_router::components::{Outlet, ParentRoute, Route, Router, Routes};
+use leptos_router::{ParamSegment, StaticSegment, WildcardSegment};
+
+use crate::ui::layout::Shell;
+use crate::ui::pages::{HomePage, NotFound, PortfolioDetail, PortfolioList, Publications, Experience};
+
+#[component]
+pub fn App() -> impl IntoView {
+    provide_meta_context();
+
+    view! {
+        <Stylesheet id="leptos" href="/pkg/egonik-site.css"/>
+        <Title text="Eduardo Gonik"/>
+        <Meta name="description" content="Personal site: portfolio, publications, experience."/>
+
+        <Router>
+            <Routes fallback=NotFound>
+                <ParentRoute path=StaticSegment("") view=Shell>
+                    <Route path=StaticSegment("")             view=HomePage/>
+                    <Route path=StaticSegment("portfolio")    view=PortfolioList/>
+                    <Route path=(StaticSegment("portfolio"), ParamSegment("slug"))
+                                                              view=PortfolioDetail/>
+                    <Route path=StaticSegment("publications") view=Publications/>
+                    <Route path=StaticSegment("experience")   view=Experience/>
+                    <Route path=WildcardSegment("any")        view=NotFound/>
+                </ParentRoute>
+            </Routes>
+        </Router>
+    }
+}
+\end{lstlisting}
+
+\begin{pitfall}[Use \code{<A>} for internal links, \code{<a>} for external ones]
+\code{leptos\_router}'s \code{<A href="/portfolio">} intercepts the click and navigates
+client-side --- journey 2 from Chapter~\ref{ch:lifecycle}. A plain \code{<a href="/portfolio">}
+triggers a full page load, throwing away the wasm bundle you just downloaded and re-running SSR.
+Both work; one is much slower. For links off your site, plain \code{<a>} is correct.
+\end{pitfall}
+
+\section{Per-page titles, and the SEO detail that is easy to miss}
+
+\code{leptos\_meta}'s \code{<Title>} works inside any component, including a page, and the last one
+rendered wins. So each page sets its own:
+
+\begin{lstlisting}[style=rs]
+#[component]
+pub fn Publications() -> impl IntoView {
+    view! {
+        <Title text="Publications | Eduardo Gonik"/>
+        // ...
+    }
+}
+\end{lstlisting}
+
+There is a subtlety when the title depends on \emph{loaded data} --- a portfolio detail page whose
+title is the project name. During server rendering, the HTML \code{<head>} is sent before the body
+finishes. If the title comes from a normal \code{Resource}, the head may already be on the wire by
+the time the data arrives, and the crawler sees the generic title.
+
+\begin{pattern}[\code{Resource::new\_blocking} for data that feeds the head]
+\code{Resource::new\_blocking} has the same signature as \code{Resource::new} but holds the HTTP
+response until the data has loaded. Use it for exactly the one resource whose value determines
+\code{<Title>}, \code{<Meta>} or the HTTP status --- and for nothing else, because it costs you
+streaming.
+\begin{lstlisting}[style=rs]
+// the project name is in the title and the meta description -> blocking
+let item = Resource::new_blocking(move || slug(), |s| get_portfolio_item(s));
+\end{lstlisting}
+\end{pattern}
+
+\section{404 must be a real 404}
+
+The starter template already gets this right --- verifiably, and this is worth checking rather than
+assuming, because the mechanism is easy to break later.
+
+\begin{verified}[Verified against the running binary]
+\begin{lstlisting}[style=out]
+$ curl -s -o /dev/null -w '%{http_code}\n' localhost:3000/nonexistent-path
+404
+$ curl -s localhost:3000/nonexistent-path | grep -o '<h1>[^<]*</h1>'
+<h1>Not Found</h1>
+\end{lstlisting}
+\end{verified}
+
+So the 404 path works today. One subtlety, though: \file{app.rs} declares
+\emph{both} a wildcard route and a \code{Routes} fallback:
+
+\begin{lstlisting}[style=rs]
+<Routes fallback=move || "Not found.">                    // <-- unreachable
+    <Route path=StaticSegment("") view=HomePage/>
+    <Route path=WildcardSegment("any") view=NotFound/>    // <-- matches everything else first
+</Routes>
+\end{lstlisting}
+
+The wildcard route matches every unmatched path, so the fallback string is dead code that will
+never render. That is harmless and misleading in equal measure --- it looks like the 404 handler,
+and it is not. Delete it, or point it at \code{NotFound} so that the two agree.
+
+\code{NotFound} sets the status inside a \code{cfg} block:
+
+\begin{lstlisting}[style=rs]
+#[cfg(feature = "ssr")]
+{
+    let resp = expect_context::<leptos_actix::ResponseOptions>();
+    resp.set_status(actix_web::http::StatusCode::NOT_FOUND);
+}
+\end{lstlisting}
+
+The \code{cfg} is not defensive noise --- \code{ResponseOptions} exists only during server
+rendering, because only then is there an HTTP response to modify. If a visitor navigates to a bad
+URL \emph{after} hydration there is no new request to set a status on, which is a real and
+unavoidable asymmetry: the first load of a missing page returns 404, a client-side navigation to one
+does not. That is correct behaviour and matches how every SPA works.
+
+The same mechanism applies to a \code{/portfolio/:slug} that does not exist, and it is the reason
+Chapter~\ref{ch:errors} insists on calling \code{set\_status} in the error mapping layer. A detail
+page for a deleted project must return 404, or search engines will index it forever.
+
+% ===========================================================================
+\chapter{Loading data into a page}
+\label{ch:loading}
+
+\section{The three resource types, and which one you want}
+
+This is the most common place to make a wrong choice that appears to work. All three types load
+async data; they differ in whether they participate in server rendering.
+
+\begin{table}[htbp]
+\centering
+\caption{Resource types in Leptos 0.8.}
+\label{tab:resources}
+\small
+\begin{tabular}{@{}L{0.19\textwidth}cL{0.30\textwidth}L{0.34\textwidth}@{}}
+\toprule
+\textbf{Type} & \textbf{Runs in SSR?} & \textbf{Constructor} & \textbf{Use it when} \\
+\midrule
+\code{Resource} & \textcolor{moss}{yes} & \code{new(source, fetcher)} & the default. Reactive to
+its source; result is serialised into the HTML \\
+\code{Resource\allowbreak::new\_blocking} & \textcolor{moss}{yes} & same & the value determines
+\code{<Title>}, \code{<Meta>} or the HTTP status \\
+\code{OnceResource} & \textcolor{moss}{yes} & \code{new(future)} & loads exactly once, never
+re-fetches, no source signal \\
+\code{LocalResource} & \textcolor{crimson}{\textbf{no}} & \code{new(fetcher)} & browser-only APIs,
+or a future that is not \code{Send} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{pitfall}[\code{LocalResource} is the trap]
+Its documentation says it ``will only begin loading data if you are on the client''. Reach for it
+--- perhaps because a \code{Send} bound was inconvenient --- and your page silently stops being
+server-rendered: the HTML ships as an empty shell, the content appears only after the wasm loads,
+search engines see nothing, and none of it produces a warning. If you find yourself reaching for
+\code{LocalResource} to make a \code{Send} error go away, the real problem is almost always a
+non-\code{Send} value held across an \code{.await} inside the server function --- typically a
+database connection. Fix that instead; Chapter~\ref{ch:blocking} shows how.
+\end{pitfall}
+
+\begin{pitfall}[A \code{Send} error that points at the wrong line]
+\code{Resource::new} requires the fetcher's future to be \code{Send} and \code{T} to be
+\code{Send + Sync + Serialize + DeserializeOwned}. If your server function holds a
+\code{PooledConnection} across an \code{.await}, the resulting \code{Send} violation surfaces at
+\code{Resource::new} --- in a different file from the actual mistake. When a \code{Send} error names
+a resource, look inside the server function it calls.
+\end{pitfall}
+
+\section{The canonical read pattern}
+
+\begin{pattern}[\code{Resource} $+$ \code{Transition} $+$ \code{ErrorBoundary} $+$ \code{Suspend}]
+\begin{lstlisting}[style=rs,caption={\file{src/publications/components.rs} --- the shape to grow the
+current placeholder into.}]
+use leptos::prelude::*;
+use leptos::either::Either;
+use crate::publications::api::list_publications;
+
+#[component]
+pub fn Publications() -> impl IntoView {          // NOTE: pub
+    let publications = Resource::new(|| (), |_| list_publications());
+
+    view! {
+        <Transition fallback=move || view! { <p class="text-slate-500">"Loading..."</p> }>
+            <ErrorBoundary fallback=|errors| view! {
+                <p class="text-red-700">
+                    "Could not load publications: "
+                    {move || errors.get()
+                        .into_iter()
+                        .map(|(_, e)| e.to_string())
+                        .collect::<Vec<_>>()
+                        .join("; ")}
+                </p>
+            }>
+                {move || Suspend::new(async move {
+                    publications.await.map(|rows| if rows.is_empty() {
+                        Either::Left(view! { <p>"Nothing published yet."</p> })
+                    } else {
+                        Either::Right(rows.into_iter()
+                            .map(|p| view! { <PublicationCard publication=p/> })
+                            .collect_view())
+                    })
+                })}
+            </ErrorBoundary>
+        </Transition>
+    }
+}
+\end{lstlisting}
+\end{pattern}
+
+Five details in that snippet are load-bearing:
+
+\begin{description}
+  \item[\code{Transition}, not \code{Suspense}.] \code{<Suspense>} shows its fallback every time
+    any nested resource reloads, so a re-fetch makes the list flash back to ``Loading\ldots''.
+    \code{<Transition>} shows the fallback on first load only and keeps the stale content visible
+    while new data arrives. For lists that refetch, \code{Transition} is almost always what you
+    want.
+
+  \item[\code{ErrorBoundary} goes \emph{inside} the transition.] Not outside. The upstream Leptos
+    example still carries a comment noting that the outside-in arrangement breaks \code{Suspense}
+    under Actix. Inside-out works; take the ordering as given.
+
+  \item[\code{Suspend::new} lets you \code{.await} the resource in the view.] The alternative is
+    \code{publications.get()} returning \code{Option<Result<...>>} and a nest of matches.
+    \code{Suspend} removes the \code{Option}, because inside a suspense boundary the framework
+    guarantees the value is there.
+
+  \item[\code{Either::Left} / \code{Either::Right}.] Two \code{view!} invocations produce two
+    \emph{different static types} in Leptos 0.8, so an \code{if}/\code{else} that returns markup
+    will not compile without wrapping the arms. \code{Either} is the cheap fix;
+    \code{.into\_any()} is the type-erasing one, slightly slower and sometimes clearer.
+
+  \item[Errors surface by themselves.] A \code{Result} rendered in a view renders the \code{Ok}
+    value and, on \code{Err}, renders nothing while registering the error with the nearest
+    \code{ErrorBoundary}. You do not match on the error --- you let it propagate to the boundary.
+\end{description}
+
+\section{Writes: \code{Action}, not \code{Resource}}
+
+You have no writes yet. When you add them, the pairing is strict.
+
+\begin{antipattern}[A mutation inside a \code{Resource}]
+A \code{Resource} runs during server rendering \emph{and} may run again on the client. Put an
+\code{INSERT} in one and you will insert twice, and the second row will appear only in production
+where the timing differs. Reads are Resources; writes are Actions.
+\end{antipattern}
+
+\begin{lstlisting}[style=rs,caption={A write, and the read that refreshes itself when the write lands.}]
+let add_item = ServerAction::<AddPortfolioItem>::new();
+
+// the resource re-runs whenever the action's version changes
+let items = Resource::new(
+    move || add_item.version().get(),
+    |_| list_portfolio(),
+);
+
+view! {
+    <ActionForm action=add_item>
+        <input type="text" name="title"/>
+        <button type="submit">"Add"</button>
+    </ActionForm>
+}
+\end{lstlisting}
+
+\begin{why}[Why \code{<ActionForm>} rather than an \code{on:click} handler]
+\code{<ActionForm>} degrades to an ordinary HTML \code{<form method="POST">}. With no JavaScript it
+still submits, the server function still runs, and \code{leptos\_actix} notices that the request
+accepts \code{text/html} and responds with a 302 back to the referring page. You get progressive
+enhancement free. A click handler that calls the server function directly does not.
+\end{why}
+
+\begin{pitfall}[\code{Vec} parameters need \code{\#[server(default)]}]
+The default URL encoding omits an empty \code{Vec} entirely, and deserialisation on the server then
+fails with a missing-argument error at runtime --- not at compile time. Any server function taking
+a \code{Vec} needs the annotation:
+\begin{lstlisting}[style=rs]
+#[server]
+pub async fn set_tags(#[server(default)] tags: Vec<String>) -> Result<(), ServerFnError> { ... }
+\end{lstlisting}
+\end{pitfall}
+
+\section{One thing to internalise about server functions}
+
+\begin{keyidea}
+A server function is a public HTTP endpoint. Anyone can \code{curl} it. It is not a private
+mechanism for your front end to talk to your back end.
+\end{keyidea}
+
+The Leptos book puts it as ``server functions are not magic; they're syntax sugar for defining a
+public API''. Two practical consequences for this site:
+
+\begin{itemize}
+  \item \code{portfolio\_items} has a \code{public} boolean. A server function called
+    \code{list\_portfolio} must filter on it \emph{in the query}, not in the component. Filtering in
+    the component leaves the private rows in the JSON payload, visible in the network tab and in the
+    server-rendered HTML.
+  \item Every write function needs its own authorisation check, in its own body. There is no
+    middleware that will do it for you by virtue of the function being ``internal'', because it is
+    not internal.
+\end{itemize}
+
+% ===========================================================================
+\chapter{Tailwind CSS}
+\label{ch:tailwind}
+
+\section{What you are switching from and to}
+
+\file{style/main.scss} is three lines of Sass. cargo-leptos compiles it with a \code{sass} binary it
+downloaded itself, and injects the result at \file{/pkg/egonik-site.css} --- which is already what
+\file{src/app.rs} references, so that part needs no change.
+
+The good news is that the Tailwind side needs no Node, no \file{package.json}, and no \code{npm
+install}. cargo-leptos manages the Tailwind CLI exactly as it manages Sass.
+
+\begin{verified}[Verified: the Tailwind CLI is already on this machine]
+\begin{lstlisting}[style=out]
+$ ls ~/.cache/cargo-leptos/
+  sass-1.86.0/  tailwindcss-v4.2.1/  wasm-bindgen-0.2.125/  wasm-bindgen-0.2.126/
+\end{lstlisting}
+cargo-leptos 0.3.6 hardcodes \code{v4.2.1} as its default Tailwind version --- so this is
+\textbf{Tailwind 4}, not 3, and the difference matters for every instruction below. The binary is
+downloaded from the \code{tailwindlabs/tailwindcss} GitHub releases; \code{LEPTOS\_TAILWIND\_VERSION}
+overrides the version if you ever need to.
+\end{verified}
+
+\section{The change, in four steps}
+
+\begin{runbook}[Adopting Tailwind 4]
+\textbf{1. Create the input file.} One line is genuinely sufficient in Tailwind 4:
+\begin{lstlisting}[style=sh]
+# style/tailwind.css
+@import "tailwindcss";
+\end{lstlisting}
+
+\textbf{2. Point cargo-leptos at it}, in \file{Cargo.toml}:
+\begin{lstlisting}[style=toml]
+[package.metadata.leptos]
+tailwind-input-file = "style/tailwind.css"
+# style-file = "style/main.scss"     <-- delete this line (see below)
+# do NOT add tailwind-config-file    <-- see the pitfall below
+\end{lstlisting}
+
+\textbf{3. Delete \file{style/main.scss}} and the three lines in it. Tailwind's preflight already
+sets sensible defaults, and the \code{text-align: center} in that file is not something you want
+site-wide.
+
+\textbf{4. Rebuild.} \code{cargo leptos watch}. The href in \file{app.rs} does not change: the
+combined output is always \file{<site-root>/<site-pkg-dir>/<output-name>.css}, which for this
+project is \file{target/site/pkg/egonik-site.css}, served at \code{/pkg/egonik-site.css}.
+\end{runbook}
+
+\section{The traps, in order of how much time they cost}
+
+\begin{pitfall}[Do not set \code{tailwind-config-file}]
+This is the highest-value warning in the chapter. Under cargo-leptos 0.3.6 the default Tailwind is
+v4, and \textbf{the v4 CLI has no \code{--config} flag at all}. It accepts the argument silently,
+exits 0, and ignores it --- even if the path does not exist.
+
+Worse: if you set the key and the file is missing, cargo-leptos \emph{writes a v3-style
+\file{tailwind.config.js} into your project for you}, complete with \code{content} globs. That file
+then sits in your repository looking authoritative while having no effect whatsoever. When purging
+misbehaves, you will edit it, and nothing will happen.
+
+Setting \code{tailwind-config-file} without \code{tailwind-input-file} is also a hard error, with
+the message \code{The Cargo.toml `tailwind-input-file` is required when using `tailwind-config-file`]}
+--- the stray bracket is really in the source.
+\end{pitfall}
+
+\begin{pitfall}[A \code{tailwindcss} on your PATH silently wins]
+cargo-leptos calls \code{which::which("tailwindcss")} first and uses whatever it finds,
+\emph{with no version check}. If a Tailwind 3 CLI is installed globally, you build with v3 while
+cargo-leptos still takes its v4 code path and omits \code{--config} --- so you get v3 with no
+configuration, which purges nearly everything. The same happens if a \file{package.json} exists at
+the workspace root, because cargo-leptos prepends \file{node\_modules/.bin} to \code{PATH}.
+
+\file{end2end/package.json} exists in this repository. It is in \file{end2end/}, not the workspace
+root, so it does not currently trigger this --- but if you ever add a root-level
+\file{package.json}, remember this paragraph. Diagnose with \code{cargo leptos watch -vv} and read
+the logged \code{tailwindcss --input ...} line.
+\end{pitfall}
+
+\begin{pitfall}[\file{target/} must stay in \file{.gitignore}]
+Tailwind 4 detects classes by scanning the filesystem, and it skips whatever \file{.gitignore}
+excludes. \file{target/} contains the previous CSS output and vendored crate sources; scanning it is
+slow --- one reported case went from 2\,ms to 54\,s --- and it can resurrect classes you deleted,
+making purging look broken. Your \file{.gitignore} lists \file{target/} already. Leave it there.
+\end{pitfall}
+
+\begin{pitfall}[Three different path bases in one pipeline]
+This is the usual cause of ``my classes are being purged''.
+\begin{itemize}
+  \item \code{tailwind-input-file} resolves against the directory of the \file{Cargo.toml} holding
+    the metadata table.
+  \item \code{@source} directives inside the CSS resolve against \emph{the CSS file}.
+  \item Tailwind's automatic detection resolves against \emph{the process working directory}, and
+    cargo-leptos \code{chdir}s to the cargo workspace root.
+\end{itemize}
+For this single-crate project all three coincide, so it works with no configuration. If you ever
+move to a workspace, pin it explicitly and stop relying on the coincidence:
+\begin{lstlisting}[style=sh]
+@import "tailwindcss" source("../src");
+\end{lstlisting}
+\end{pitfall}
+
+\section{Class detection inside \code{view!} macros}
+
+The question everyone asks: does Tailwind find classes written inside a Rust macro? Yes, without
+configuration.
+
+\begin{verified}[Verified against the cached v4.2.1 binary]
+With a bare \code{@import "tailwindcss";} and no \code{@source}, all of these forms produced their
+rules in the output:
+\begin{lstlisting}[style=rs]
+view! {
+    <div class="flex gap-4 text-sky-500">
+        <p class:underline=true class:font-bold=cond>"hi"</p>
+        <span class=("bg-red-500", move || active())>"t"</span>
+    </div>
+}
+\end{lstlisting}
+Note in particular that \code{class:underline=true} yields \code{underline}. The v3-era workaround
+--- a JavaScript \code{transform} that stripped \code{class:} prefixes --- is unnecessary under v4,
+and there is no \code{transform} option in v4 anyway.
+\end{verified}
+
+\begin{antipattern}[Computing class names at runtime]
+\begin{lstlisting}[style=rs]
+let colour = if item.public { "green" } else { "red" };
+view! { <span class=format!("text-{colour}-600")>...</span> }   // BROKEN
+\end{lstlisting}
+Tailwind scans \emph{source text}. \code{text-green-600} never appears in your source, so the rule
+is never generated and the element is unstyled. Write both class names out in full and choose
+between them:
+\begin{lstlisting}[style=rs]
+let colour = if item.public { "text-green-600" } else { "text-red-600" };
+view! { <span class=colour>...</span> }                        // works
+\end{lstlisting}
+This is the single most common Tailwind bug in any language, and it is easier to hit in Rust because
+string formatting is so natural.
+\end{antipattern}
+
+\section{Two subtleties worth knowing before they surprise you}
+
+\subsection{If you keep the Sass file, it will override Tailwind}
+
+\code{style-file} and \code{tailwind-input-file} are \emph{not} mutually exclusive. cargo-leptos
+runs Sass and Tailwind as two independent processes and simply concatenates the results, Sass first,
+then Tailwind.
+
+That ordering suggests Tailwind wins ties. It does not. Tailwind 4 wraps everything in real cascade
+layers (\code{@layer theme, base, components, utilities;}), and \textbf{unlayered CSS beats layered
+CSS} in the cascade regardless of order. So your hand-written Sass will override Tailwind utilities
+of equal specificity even though it appears first in the file. Two consequences:
+
+\begin{itemize}
+  \item If you keep both, wrap your own CSS in a layer so it participates in the cascade normally.
+  \item \code{@apply}, \code{@theme} and \code{@plugin} work \emph{only} in the Tailwind input file.
+    Put \code{@apply} in the \file{.scss} and dart-sass passes it through untouched --- you get
+    invalid CSS in the output rather than an error.
+\end{itemize}
+
+The simplest resolution is the one in the runbook: drop \code{style-file} entirely and put
+everything, including \code{@theme} customisation, in \file{style/tailwind.css}.
+
+\subsection{\code{browserquery = "defaults"} downlevels modern CSS}
+
+cargo-leptos runs the combined CSS through \code{lightningcss} on \emph{every} build --- not only
+release --- using \code{browserquery} as its target list. Tailwind 4 output depends on
+\code{@property}, \code{oklch()} and \code{color-mix()}. With a broad target list like the current
+\code{"defaults"}, lightningcss will rewrite that output for old browsers, and colours or custom
+properties can come out subtly wrong.
+
+\begin{pattern}[Narrow \code{browserquery}]
+\begin{lstlisting}[style=toml]
+browserquery = "last 2 versions and not dead"
+\end{lstlisting}
+There is no way to disable the lightningcss pass. Note also that if lightningcss cannot parse
+Tailwind's output, cargo-leptos 0.3.6 falls back to emitting the unminified CSS with only a
+\emph{trace}-level log --- so a real problem is invisible unless you run with \code{-vv}. Older
+versions failed the build outright, which was arguably friendlier.
+\end{pattern}
+
+\section{Watching and reloading}
+
+\begin{itemize}
+  \item \textbf{Editing a \code{.rs} file does re-run Tailwind.} cargo-leptos knows that CSS can
+    come from source files when \code{tailwind-input-file} is set, so a Rust change triggers a
+    style rebuild. Adding a utility class to a \code{view!} works in \code{watch} mode.
+  \item \textbf{A style-only change reloads just the CSS}, over the live-reload websocket, without
+    a full page refresh.
+  \item \textbf{But \code{--hot-reload} cannot add new classes.} The view-patching hot reload
+    updates markup in place without a rebuild, and a brand-new Tailwind class needs a rebuild to
+    exist. Expect to restart occasionally.
+  \item \textbf{Only the exact input-file path is watched}, not files it \code{@import}s. If you
+    split your CSS across several files, list the others under \code{watch-additional-files}.
+    There is also a known open bug where a change to the input file is detected but the new CSS is
+    not applied until a manual restart.
+\end{itemize}
+
+\section{Design tokens, once Tailwind is in}
+
+A brief note, because it is the thing that makes a Tailwind codebase pleasant or awful. In v4,
+customisation happens in CSS rather than JavaScript:
+
+\begin{lstlisting}[style=sh,caption={\file{style/tailwind.css} --- tokens defined once, used everywhere.}]
+@import "tailwindcss";
+
+@theme {
+  --color-ink:   oklch(0.22 0.02 250);
+  --color-paper: oklch(0.98 0.005 90);
+  --color-accent: oklch(0.55 0.15 40);
+  --font-display: "Libertinus Serif", Georgia, serif;
+}
+\end{lstlisting}
+
+Those become utilities automatically: \code{text-ink}, \code{bg-paper}, \code{border-accent},
+\code{font-display}. Define the palette once, then never write a raw hex value in a \code{view!}
+again --- that discipline is what keeps a hand-built site from drifting into fifteen shades of
+almost-grey.

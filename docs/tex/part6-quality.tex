@@ -1,0 +1,484 @@
+% ===========================================================================
+\part{Quality and operations}
+% ===========================================================================
+
+\chapter{Testing this stack}
+\label{ch:testing}
+
+\section{Where the tests should go, and why not everywhere}
+
+There are currently no tests. The Playwright directory contains the starter template's example
+spec, and its dependencies are not even installed --- \file{end2end/node\_modules} does not exist.
+
+A personal website does not need exhaustive testing, and pretending otherwise is how testing
+becomes a chore that gets abandoned. The useful question is narrower: \emph{which failures would
+you not notice?} For this project there are exactly three, and they map onto three kinds of test.
+
+\begin{diagram}{What to test, and roughly how much. The widths are deliberate --- most of the value
+is in the middle band, not at the top or the bottom.}{fig:pyramid}
+\begin{tikzpicture}[x=1mm,y=1mm]
+  \fill[fill=rust!12,draw=rust!45,line width=0.7pt] (46,0) -- (94,0) -- (86,-13) -- (54,-13) -- cycle;
+  \node[align=center,font=\sffamily\scriptsize] at (70,-6.5) {\textbf{e2e (Playwright)}\\2--4 specs};
+  \node[anchor=west,align=left,font=\sffamily\scriptsize,text=slate] at (98,-6.5)
+    {does the site load, navigate, and\\show real rows from a real database?};
+
+  \fill[fill=teal!12,draw=teal!45,line width=0.7pt] (30,-15) -- (110,-15) -- (102,-34) -- (38,-34) -- cycle;
+  \node[align=center,font=\sffamily\scriptsize] at (70,-24.5) {\textbf{integration: repository against Postgres}\\one test per query};
+  \node[anchor=west,align=left,font=\sffamily\scriptsize,text=slate] at (114,-24.5)
+    {\textbf{the highest-value band.}\\Does the SQL match the schema,\\and return what you think?};
+
+  \fill[fill=moss!12,draw=moss!45,line width=0.7pt] (14,-36) -- (126,-36) -- (118,-52) -- (22,-52) -- cycle;
+  \node[align=center,font=\sffamily\scriptsize] at (70,-44) {\textbf{unit: pure functions}\\formatting, slugs, date ranges, ordering};
+  \node[anchor=west,align=left,font=\sffamily\scriptsize,text=slate] at (130,-44)
+    {cheap, fast, and only worth\\writing where logic exists};
+\end{tikzpicture}
+\end{diagram}
+
+\begin{why}[Why the integration band is widest]
+Diesel gives you compile-time-checked queries, so a query that compiles is \emph{well-formed}. It
+is not necessarily \emph{correct}: nothing at compile time tells you that \code{list\_public()}
+actually filters on \code{public}, that ordering is reverse-chronological, or that a join returns
+one row per parent rather than the Cartesian product. Those are exactly the mistakes that reach a
+rendered page and look plausible.
+
+Meanwhile, component tests in this stack are expensive relative to their yield --- they need a
+WASM test runner or a headless browser --- and there is very little logic in a component worth
+testing once data loading is factored out. Which is itself an argument for keeping logic out of
+components, as the Leptos book puts it: ``the less of your logic is wrapped into your components
+themselves, the more idiomatic your code will feel and the easier it will be to test''.
+\end{why}
+
+\section{Testing a repository against a real database}
+
+Two viable mechanisms, and the choice depends on how much isolation you want to pay for.
+
+\subsection{Option A: transaction rollback, against one long-lived database}
+
+Diesel has this built in. \code{Connection::test\_transaction} runs a closure inside a transaction
+that is never committed:
+
+\begin{lstlisting}[style=rs,caption={Fast, no containers, no cleanup.}]
+#[test]
+fn list_publications_is_newest_first() {
+    let mut conn = PgConnection::establish(&test_database_url()).unwrap();
+    conn.test_transaction::<_, diesel::result::Error, _>(|conn| {
+        insert_publication(conn, "older", 2019)?;
+        insert_publication(conn, "newer", 2024)?;
+
+        let rows = publication_items::table
+            .order(publication_items::year.desc())
+            .load::<PublicationItem>(conn)?;
+
+        assert_eq!(rows[0].title, "newer");
+        Ok(())
+    });
+    // the transaction is rolled back; the database is untouched
+}
+\end{lstlisting}
+
+\begin{pitfall}[\code{test\_transaction} cannot wrap code that opens its own transaction]
+\code{begin\_test\_transaction} \emph{panics} if a transaction is already open. So if a repository
+method wraps its work in \code{conn.transaction(|c| ...)} --- which it should, once you write
+multi-table inserts --- you cannot test it this way. The way out is a design decision worth making
+early: \textbf{keep transaction control above the repository}. Repository methods take
+\code{\&mut PgConnection} and do one thing; the caller decides what is atomic. That is better
+design independently of testing.
+\end{pitfall}
+
+\subsection{Option B: a container per test run}
+
+\begin{lstlisting}[style=toml]
+[dev-dependencies]
+testcontainers-modules = { version = "0.15", features = ["postgres", "blocking"] }
+\end{lstlisting}
+
+\begin{lstlisting}[style=rs]
+use testcontainers_modules::{postgres, testcontainers::runners::SyncRunner};
+
+let node = postgres::Postgres::default().start().unwrap();
+let url = format!("postgres://postgres:postgres@{}:{}/postgres",
+    node.get_host().unwrap(), node.get_host_port_ipv4(5432).unwrap());
+// run migrations, then test
+\end{lstlisting}
+
+Slower to start, completely isolated, and --- the real argument for it --- it exercises your
+\emph{migrations} as well as your queries. Depend only on \code{testcontainers-modules}; it
+re-exports \code{testcontainers} at a matching version.
+
+\begin{pattern}[Use both, for different jobs]
+\code{test\_transaction} against your development database for the fast inner loop --- it costs
+milliseconds and you will actually run it. Testcontainers in CI, where the migrations get applied
+from scratch and a broken \code{down.sql} is caught by \code{diesel migration redo -a}. That single
+CI step would have caught defects \dnum{3} and \dnum{4} the day they were written.
+\end{pattern}
+
+\section{Testing server functions}
+
+A server function is an ordinary \code{async fn} on the server, so it is directly callable in a
+test --- with one catch. If its body uses \code{leptos\_actix::extract()}, it needs an
+\code{HttpRequest} in Leptos context, which a plain \code{\#[test]} does not have.
+
+\begin{pattern}[Keep the server function thin so it barely needs testing]
+\begin{lstlisting}[style=rs]
+#[server]
+pub async fn list_publications() -> Result<Vec<PublicationDto>, ServerFnError> {
+    let pool: Data<DbPool> = leptos_actix::extract().await?;    // <- untestable part
+    let repo = PublicationRepository::new(pool.get_ref().clone());
+    Ok(repo.list().await?.into_iter().map(Into::into).collect())  // <- testable part
+}
+\end{lstlisting}
+Everything worth testing is in \code{repo.list()} and the \code{From} impl, both of which are
+plain functions with no framework context. The server function is three lines of wiring. Test the
+three lines with Playwright, and the logic with ordinary Rust tests.
+\end{pattern}
+
+\section{End to end}
+
+cargo-leptos already knows how to run Playwright --- \code{end2end-cmd} and \code{end2end-dir} are
+set in \file{Cargo.toml}, so \code{cargo leptos end-to-end} builds the site, starts the server and
+runs the specs.
+
+\begin{pitfall}[\code{npm ci}, not \code{npm install}]
+\file{end2end/package-lock.json} exists and \file{end2end/node\_modules} does not, so the first step
+is an install --- and because the lockfile is present and committed, the right command is
+\code{npm ci}, which installs exactly the locked versions. \code{npm install} would silently update
+the lockfile as a side effect of setting up the project. You will also need
+\code{npx playwright install} once, to fetch the browsers themselves.
+\end{pitfall}
+
+\begin{pitfall}[e2e needs a database, and nothing currently gives it one]
+\code{cargo leptos end-to-end} builds and serves the real application, which means it needs a real
+Postgres with migrations applied and seed data present. Without that, every spec fails in a way
+that looks like a UI bug. Point \code{end2end-cmd} at a script that ensures the database first:
+\begin{lstlisting}[style=sh]
+# end2end/run.sh
+set -euo pipefail
+docker compose up -d db
+diesel migration run
+psql "$DATABASE_URL" -f ../seeds/dev_seed.sql
+npx playwright test
+\end{lstlisting}
+\end{pitfall}
+
+Two or three specs is enough, and they should assert on \emph{content from the database}, not on
+static markup:
+
+\begin{lstlisting}[style=out]
+1. the home page renders the seeded name and every seeded contact link
+2. /publications lists the seeded publications, newest first
+3. /portfolio/<seeded-slug> renders; /portfolio/no-such-thing returns HTTP 404
+\end{lstlisting}
+
+Spec 3 is the valuable one, because it is the only test in the whole suite that would catch a
+regression in the status-code plumbing from Chapter~\ref{ch:errors} --- and that is precisely the
+kind of thing nobody notices by looking at the site.
+
+% ===========================================================================
+\chapter{Running it: logging, health, shutdown}
+\label{ch:ops}
+
+\section{Replace the \code{println!} with \code{tracing}}
+
+There is currently exactly one diagnostic in the entire application:
+
+\begin{lstlisting}[style=rs]
+println!("listening on http://{}", &addr);   // inside the app factory: once per worker
+\end{lstlisting}
+
+\begin{pattern}[\code{tracing} plus \code{tracing-actix-web}]
+\begin{lstlisting}[style=toml]
+[dependencies]
+tracing = { version = "0.1", optional = true }
+tracing-subscriber = { version = "0.3", features = ["env-filter"], optional = true }
+tracing-actix-web = { version = "0.7", optional = true }
+# ... all three go in the ssr feature list
+\end{lstlisting}
+
+\begin{lstlisting}[style=rs]
+tracing_subscriber::fmt()
+    .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+    .init();
+
+App::new().wrap(tracing_actix_web::TracingLogger::default())
+\end{lstlisting}
+\code{RUST\_LOG=info,egonik\_site=debug} then controls verbosity without a rebuild, and every request
+gets a span with an id you can correlate errors against.
+\end{pattern}
+
+\begin{why}[The one place logging genuinely matters here]
+\code{AppError::Internal} deliberately carries no detail (Chapter~\ref{ch:errors}). That is the
+right call for the browser and it means the \emph{only} record of what actually went wrong is the
+server-side log line. Without \code{tracing::error!} in the error-mapping layer, you have built a
+system that converts real database errors into the word ``internal'' and discards them. Log before
+you collapse.
+\end{why}
+
+\section{A health endpoint}
+
+Three lines, and the first thing any deployment target will ask for:
+
+\begin{lstlisting}[style=rs]
+#[actix_web::get("/healthz")]
+async fn healthz(pool: web::Data<DbPool>) -> impl Responder {
+    match web::block(move || pool.get()?.execute("SELECT 1")).await {
+        Ok(Ok(_)) => HttpResponse::Ok().body("ok"),
+        _         => HttpResponse::ServiceUnavailable().body("db unavailable"),
+    }
+}
+\end{lstlisting}
+
+\begin{pattern}[Check the dependency, not just the process]
+A health check that returns 200 as long as the process is alive tells you nothing you did not
+already know from the process being alive. Touching the pool is what makes it useful --- it
+distinguishes ``the site is up'' from ``the site is up and can serve content''. This is also the
+one Actix route in the whole application that is genuinely \emph{not} better as a server function,
+because it must be callable by a monitor that knows nothing about Leptos.
+\end{pattern}
+
+\section{Shutdown and worker tuning}
+
+\begin{lstlisting}[style=rs]
+HttpServer::new(app_factory)
+    .workers(2)                                   // 2 is plenty; the default is one per core
+    .shutdown_timeout(10)                         // finish in-flight requests on SIGTERM
+    .bind(&addr)?
+    .run()
+    .await
+\end{lstlisting}
+
+\code{shutdown\_timeout} is what makes a redeploy invisible to a visitor mid-request. On a personal
+site, \code{.workers(2)} is also a real saving: each worker gets its own blocking thread pool, and
+sixteen workers on a sixteen-core machine is a lot of idle infrastructure for a site serving a CV.
+
+\section{Run migrations at startup, or don't --- but decide}
+
+\code{diesel\_migrations} can embed the migration files into the binary and apply them on boot:
+
+\begin{lstlisting}[style=rs]
+pub const MIGRATIONS: EmbeddedMigrations = embed_migrations!("migrations");
+conn.run_pending_migrations(MIGRATIONS)?;
+\end{lstlisting}
+
+\begin{pattern}[Embed them, for a single-instance personal site]
+The alternative --- applying migrations as a separate deployment step --- is correct for anything
+with multiple replicas, where two instances starting at once would race. With one instance,
+embedding removes an entire class of deployment mistake: the binary and the schema it expects can
+never disagree, because they ship together. Note that this also means the container needs no
+\code{diesel} CLI and no \file{migrations/} directory at runtime.
+\end{pattern}
+
+% ===========================================================================
+\chapter{Build, ship, deploy}
+\label{ch:deploy}
+
+\section{What has to be in the image}
+
+A Leptos SSR application is two artefacts that must travel together: the server binary and the
+\file{site} directory holding the wasm bundle, the CSS and the assets. Ship one without the other
+and you get a server that returns HTML referencing a 404ing script.
+
+\begin{diagram}{The deployment shape. Everything the container needs is produced by one
+\code{cargo leptos build --release}.}{fig:deploy}
+\begin{tikzpicture}[node distance=5mm]
+  \node[srv,minimum width=40mm] (build) {\textbf{builder stage}\\[1pt]\scriptsize
+    rust:1.93 $+$ cargo-leptos\\\scriptsize $+$ wasm32 target};
+  \node[shared,minimum width=34mm,right=12mm of build] (out) {\code{cargo leptos build -r}\\[1pt]\scriptsize
+    \code{target/release/egonik-site}\\\scriptsize \code{target/site/}};
+  \node[cli,minimum width=40mm,right=12mm of out] (run) {\textbf{runtime stage}\\[1pt]\scriptsize
+    debian-slim $+$ \code{libpq5}\\\scriptsize $+$ ca-certificates};
+  \node[box,fill=wash,minimum width=40mm,below=10mm of run] (env) {\code{LEPTOS\_SITE\_ADDR=0.0.0.0:8080}\\
+    \code{LEPTOS\_SITE\_ROOT=site}\\\code{EGONIK\_DATABASE\_URL=...}};
+  \node[db,left=12mm of env,minimum width=26mm] (pg) {Postgres};
+  \node[box,fill=wash,minimum width=30mm,below=10mm of build] (proxy) {reverse proxy\\[1pt]\scriptsize TLS, headers, gzip};
+
+  \draw[flow] (build) -- (out);
+  \draw[flow] (out) -- node[lbl,above]{COPY} (run);
+  \draw[flow] (env) -- (run);
+  \draw[flow] (pg) -- (env);
+  \draw[flow] (proxy.east) -- ++(8mm,0) |- (run.south west);
+\end{tikzpicture}
+\end{diagram}
+
+\begin{lstlisting}[style=sh,caption={A two-stage \file{Dockerfile}. \code{libpq5} in the runtime stage is
+the detail people miss --- Diesel's \code{postgres} feature links native \code{libpq}.}]
+FROM rust:1.93-bookworm AS builder
+RUN rustup target add wasm32-unknown-unknown \
+ && cargo install cargo-leptos --locked
+WORKDIR /app
+COPY . .
+RUN cargo leptos build --release -vv
+
+FROM debian:bookworm-slim
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends libpq5 ca-certificates \
+ && rm -rf /var/lib/apt/lists/*
+WORKDIR /app
+COPY --from=builder /app/target/release/egonik-site  /app/egonik-site
+COPY --from=builder /app/target/site                 /app/site
+ENV LEPTOS_SITE_ADDR="0.0.0.0:8080"
+ENV LEPTOS_SITE_ROOT="site"
+ENV LEPTOS_ENV="PROD"
+ENV RUST_LOG="info"
+EXPOSE 8080
+CMD ["/app/egonik-site"]
+\end{lstlisting}
+
+\begin{pitfall}[\code{LEPTOS\_ENV="PROD"} is not cosmetic]
+In \code{DEV}, Leptos injects the live-reload websocket client into every page. In \code{PROD} it
+does not. Forget the variable and your deployed site will try, forever, to open a websocket to
+\code{localhost:3001}.
+\end{pitfall}
+
+\begin{pitfall}[Do not pass a path to \code{get\_configuration}]
+\code{get\_configuration(Some("./Cargo.toml"))} reads \file{Cargo.toml} at \emph{runtime}. The
+image above ships neither \file{Cargo.toml} nor the source tree, so it would fail on boot. The
+\code{None} in the current \file{main.rs} is correct --- keep it, and drive \code{LeptosOptions}
+through \code{LEPTOS\_*} variables as the Dockerfile does.
+\end{pitfall}
+
+\section{The Compose file needs an app service}
+
+\file{docker-compose.yml} currently defines only Postgres, and it defines it with a database name
+that disagrees with \file{.env} (defect \dnum{14}). Fixing both together makes a fresh clone work
+on the first try, which is the actual point of having a Compose file.
+
+\begin{lstlisting}[style=sh,caption={The corrected \file{docker-compose.yml}.}]
+services:
+  db:
+    image: postgres:17
+    restart: always
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: egonik_site          # <-- matches .env; no hyphen, so no quoting in psql
+    ports: ["5439:5432"]
+    volumes: ["postgres_data:/var/lib/postgresql/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      retries: 10
+
+  app:
+    build: .
+    depends_on:
+      db: { condition: service_healthy }
+    environment:
+      EGONIK_DATABASE_URL: postgres://postgres:postgres@db:5432/egonik_site
+      LEPTOS_SITE_ADDR: "0.0.0.0:8080"
+      LEPTOS_SITE_ROOT: "site"
+      LEPTOS_ENV: "PROD"
+    ports: ["8080:8080"]
+
+volumes:
+  postgres_data:
+\end{lstlisting}
+
+\begin{pattern}[Rename the database and drop the hyphen]
+\code{my-site} is a hyphenated identifier, which means every bare \code{psql} or DDL statement
+that names it needs double quotes --- \code{ALTER DATABASE "my-site" ...}. It works, and it is a
+permanent papercut. \code{egonik\_site} costs nothing to switch to today, while the database holds
+no data.
+\end{pattern}
+
+\section{Continuous integration}
+
+There is no \file{.github/} directory. The single highest-value workflow is short, and it is
+almost entirely made of things this document has already argued for.
+
+\begin{lstlisting}[style=sh,caption={\file{.github/workflows/ci.yml} --- the five checks that matter.}]
+name: ci
+on: [push, pull_request]
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env: { POSTGRES_PASSWORD: postgres }
+        options: >-
+          --health-cmd pg_isready --health-interval 5s --health-retries 10
+        ports: ["5432:5432"]
+    env:
+      DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with: { targets: wasm32-unknown-unknown, components: rustfmt, clippy }
+
+      - run: cargo fmt --all --check
+      - run: cargo clippy --no-default-features --features ssr -- -D warnings
+
+      # 1. the server program
+      - run: cargo check --no-default-features --features ssr
+      # 2. the browser program  <-- the check `cargo leptos watch` can hide from you
+      - run: cargo check --lib --no-default-features --features hydrate
+                         --target wasm32-unknown-unknown
+
+      # 3. migrations apply AND revert, every one of them
+      - run: cargo install diesel_cli --no-default-features --features postgres --locked
+      - run: diesel migration run
+      - run: diesel migration redo -a          # would have caught defects D3 and D4
+
+      # 4. schema.rs is not stale
+      - run: diesel print-schema > /tmp/schema.rs && diff -u src/schema.rs /tmp/schema.rs
+
+      - run: cargo test --no-default-features --features ssr
+\end{lstlisting}
+
+\begin{why}[Why steps 2, 3 and 4 in particular]
+Step 2 exists because \code{cargo leptos watch} can leave the wasm target un-rebuilt, so ``it works
+locally'' is not evidence that both programs compile. Chapter~\ref{ch:twobuilds} makes this a habit;
+CI makes it a guarantee.
+
+Step 3 is the automated form of the discipline in Chapter~\ref{ch:migrations}. Every migration
+defect in this document is a \code{down.sql} defect, and every one of them is caught by
+\code{redo -a} in under a second.
+
+Step 4 catches the specific mistake of committing a migration without regenerating
+\file{src/schema.rs}, which produces type errors describing a schema that exists nowhere.
+\end{why}
+
+\begin{pattern}[Pin the toolchain]
+There is no \file{rust-toolchain.toml}. Add one, so CI and your machine cannot silently diverge:
+\begin{lstlisting}[style=toml]
+[toolchain]
+channel = "1.93.1"
+targets = ["wasm32-unknown-unknown"]
+components = ["rustfmt", "clippy"]
+\end{lstlisting}
+\end{pattern}
+
+\section{Commit \file{Cargo.lock}}
+
+\file{.gitignore} line 8 excludes \file{Cargo.lock}, and the file is consequently untracked. That
+rule is correct for a \emph{library}, where consumers resolve their own dependency versions. This
+crate produces a binary, and for a binary the lockfile is what makes a build reproducible: without
+it, CI and your machine can resolve different versions of \code{leptos} and you get an error that
+exists on exactly one of them. Remove the line and commit the file. Defect \dnum{13}.
+
+\section{And \file{.env} is not ignored}
+
+\begin{verified}
+\begin{lstlisting}[style=out]
+$ git check-ignore -v .env
+  (no output -- the file is NOT ignored)
+$ git status --short
+  ?? .env
+\end{lstlisting}
+\end{verified}
+
+\file{.env} contains live Postgres credentials, is untracked, and is \emph{not} excluded by
+\file{.gitignore} --- so a single \code{git add -A} commits it, and once it is in history it stays
+there. This is defect \dnum{19}, and the fix is three lines:
+
+\begin{lstlisting}[style=sh,caption={Additions to \file{.gitignore}.}]
+.env
+migrations/.diesel_lock
+/site                      # the repo-dump artefact in the working tree
+dumpSkip.txt
+\end{lstlisting}
+
+Then add a committed \file{.env.example} with the keys and no values, so a fresh clone knows what
+to set. While you are in that file: the \file{.gitignore}, \file{README.md} and \file{LICENSE} are
+still the Leptos starter template's. The README documents how to use the template rather than how to
+run this site, which is a small thing that makes the repository read as unfinished.

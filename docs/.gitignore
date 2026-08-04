@@ -1,0 +1,6 @@
+# tectonic build artefacts; main.pdf is the deliverable and may be committed
+main.log
+main.aux
+main.out
+main.toc
+_probe*

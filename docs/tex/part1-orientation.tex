@@ -1,0 +1,421 @@
+% ===========================================================================
+\part{Orientation}
+% ===========================================================================
+
+\chapter{How to read this document}
+
+\section{What this document is for}
+
+You have written the skeleton of a personal website in Rust. The database exists, four
+migrations have been applied, four domain modules each have a model and a repository, and
+the server compiles. What does \emph{not} yet exist is any connection between the data and the
+page: \file{src/app.rs} is still the Leptos starter template with a click counter in it.
+
+This document exists so that the next stretch of work --- the part where the data finally
+reaches the screen --- is built on decisions made deliberately rather than by accident. That
+distinction matters more in this stack than in most. A Leptos application compiles the same
+source file twice, once for a native server and once for WebAssembly in the browser, and the
+consequences of that fact reach into the type of every struct you write. If you place a struct
+in the wrong module, or gate a dependency behind the wrong feature flag, you do not get a
+runtime bug you can debug later --- you get a compile error whose message points somewhere
+unhelpful, and the natural way out of it is to work around the symptom and entrench the mistake.
+Several such mistakes are already latent in the code. They are catalogued here, with the
+reasoning that makes them obvious in hindsight.
+
+\begin{keyidea}
+The goal is not to describe the system you have. It is to give you the mental model that makes
+the right next move feel obvious, and the concrete list of things to fix before that move
+becomes harder.
+\end{keyidea}
+
+\section{How it is organised}
+
+The document runs from concepts to consequences to a plan.
+
+\begin{description}
+  \item[Part I --- Orientation] takes inventory. What is in the repository today, what
+    each dependency is actually responsible for, and what the toolchain does when you type
+    \code{cargo leptos watch}.
+
+  \item[Part II --- The mental model] is the part to read even if you skip everything else.
+    It explains the two-compilation model, the lifecycle of a request through server rendering
+    and hydration, and the boundary that separates code allowed into the browser from code that
+    must never go there. Almost every structural decision later in the document is a consequence
+    of these three things.
+
+  \item[Part III --- Architecture] turns the model into layout: where domain logic lives, why a
+    persistence model and a transport DTO must be two different types, why the existing
+    \code{Repository<T>} trait will not survive contact with async code, and how the connection
+    pool should reach a server function.
+
+  \item[Part IV --- Data] reviews the schema as it is against the schema it should be, and
+    establishes migration discipline. Three of the four existing migrations cannot be rolled
+    back; this part shows why and how to repair them.
+
+  \item[Part V --- The front end] covers page structure, the data-loading patterns Leptos
+    provides, and the exact configuration for Tailwind CSS, which you have said you intend to adopt.
+
+  \item[Part VI --- Quality and operations] describes the testing strategy this stack rewards,
+    plus logging, configuration, containerisation and deployment.
+
+  \item[Part VII --- The plan] is the actionable residue: a numbered register of every defect
+    found, a milestone-ordered roadmap, and the conventions worth committing to now, while the
+    codebase is still small enough that consistency is cheap.
+\end{description}
+
+\section{Conventions used here}
+
+Five kinds of marginal box appear throughout. They exist so you can skim for the parts you need.
+
+\begin{pattern}
+A pattern to adopt. If you read only these boxes you would still end up with a
+defensible architecture.
+\end{pattern}
+
+\begin{antipattern}
+Something to avoid, usually because it is already present in the code and will
+cost more to remove later than now.
+\end{antipattern}
+
+\begin{pitfall}
+A trap that is not wrong exactly, but that will waste an afternoon if you meet it
+without warning.
+\end{pitfall}
+
+\begin{why}
+The reasoning behind a recommendation. Advice you cannot justify is advice you cannot
+adapt when circumstances change, so the justification is given whenever it is not obvious.
+\end{why}
+
+\begin{verified}
+A claim confirmed by running something on this machine, with the real output quoted.
+Where a box like this is absent and a factual claim is made about tool behaviour, treat it as
+documented-but-unverified.
+\end{verified}
+
+\vspace{2mm}
+Defects are numbered \dnum{1}, \dnum{2}, and so on. The numbers are assigned in
+Chapter~\ref{ch:register} and referenced from wherever the underlying topic is discussed, so you
+can read the register first and jump to the explanation, or read forward and collect the
+numbers as you go.
+
+% ===========================================================================
+\chapter{The state of the code today}
+\label{ch:state}
+
+\section{An honest inventory}
+
+The repository holds 589 lines of Rust across 25 files, plus four migrations, a
+\file{docker-compose.yml} and the untouched remains of the Leptos Actix starter template. The
+useful way to read that inventory is not file-by-file but by asking, of each file, \emph{is this
+load-bearing?} Table~\ref{tab:inventory} does that.
+
+\begin{table}[htbp]
+\centering
+\caption{Every Rust source file, and whether it currently does anything.}
+\label{tab:inventory}
+\small
+\begin{tabular}{@{}L{0.325\textwidth}rL{0.13\textwidth}L{0.36\textwidth}@{}}
+\toprule
+\textbf{File} & \textbf{Lines} & \textbf{Status} & \textbf{Note} \\
+\midrule
+\file{src/main.rs}          & 88 & live & Starter template, unmodified. No pool, no server-fn wiring. \\
+\file{src/lib.rs}           & 27 & live & Module roots; every server module gated on \code{ssr}. \\
+\file{src/app.rs}           & 66 & live & Starter template. A counter and a 404 page. \\
+\file{src/schema.rs}        & 103 & live & Diesel-generated, matches the live database. \\
+\midrule
+\file{src/core/mod.rs}      & 4 & live & The \code{Repository<T>} trait. Read-only. \\
+\file{src/database/connection.rs} & 17 & \textbf{orphan} & Builds a pool that nothing ever calls. \\
+\midrule
+\file{src/portfolio/model.rs} & 26 & live & \code{PortfolioItem}, \code{Tag}. Public fields. \\
+\file{src/portfolio/repository.rs} & 44 & \textbf{orphan} & Compiles; never constructed. \\
+\file{src/publications/model.rs} & 14 & live & \code{PublicationItem}. Public fields. \\
+\file{src/publications/repository.rs} & 43 & \textbf{orphan} & Compiles; never constructed. \\
+\file{src/job\_experience/model.rs} & 26 & live & \textbf{Private fields.} \\
+\file{src/job\_experience/repository.rs} & 46 & \textbf{orphan} & Compiles; never constructed. \\
+\file{src/personal\_information/model.rs} & 27 & live & \textbf{Private fields.} \\
+\file{src/personal\_information/repository.rs} & 47 & \textbf{orphan} & Compiles; never constructed. \\
+\midrule
+\file{src/entrypoint/mod.rs} & 2 & live & Declares the two files below. \\
+\file{src/entrypoint/http.rs} & 0 & \textbf{empty} & Declared and compiled; contains nothing. \\
+\file{src/entrypoint/application\_state.rs} & 0 & \textbf{empty} & Same. Created during this
+document's writing. \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{pitfall}[This table has a shelf life]
+The \file{src/entrypoint/} rows changed twice while this document was being written. As of writing,
+\file{routes/} has been deleted and replaced by \file{http.rs} and
+\file{application\_state.rs}, both empty but both properly declared --- which is a genuine
+improvement over the previous state, described below. Where this document discusses that directory,
+it discusses the shape rather than the file list. Chapter~\ref{ch:composition} is where
+\code{application\_state.rs} gets an opinion.
+\end{pitfall}
+
+Three words in that table deserve definitions, because the difference between them is the
+difference between a gap and a bug.
+
+\begin{description}
+  \item[live] The compiler sees it and something depends on it.
+  \item[orphan] The compiler sees it, it type-checks, but no code path reaches it. Orphans are
+    normal in a half-built system --- they are work in progress. The risk is that an orphan can
+    be quietly wrong for weeks, because nothing exercises it.
+  \item[dead] The compiler never sees it at all. This is worse than an orphan, because you get
+    no type-checking, no warnings, and no signal that the file is not part of the program.
+\end{description}
+
+\subsection{Dead modules, and how to detect one}
+
+Until an hour before this was written, \file{src/entrypoint/} contained a subtree the compiler had
+never seen. It is worth reconstructing, because the mechanism is invisible unless you trace module
+declarations by hand and it will happen again.
+
+Rust does not discover files. A file is part of the crate only if some ancestor module declares it
+with \code{mod}. The chain broke immediately:
+
+\begin{lstlisting}[style=rs,caption={The declaration chain as it was, traced.}]
+// src/lib.rs
+#[cfg(feature = "ssr")]
+pub mod entrypoint;            // <-- declares entrypoint, so mod.rs IS read
+
+// src/entrypoint/mod.rs
+                               // <-- EMPTY. Declares nothing.
+                               //     Therefore http.rs and routes/ were never read.
+
+// src/entrypoint/routes/job_experience/mod.rs   (unreachable anyway)
+pub mod request;
+pub mod response;              // <-- and note: route.rs was not declared here either
+\end{lstlisting}
+
+Five files, four of them empty, none of them compiled --- and, tellingly, even the one file that
+did declare its siblings had forgotten \file{route.rs}. Two independent layers of the same mistake.
+
+\begin{verified}[Verified: the compiler really does not see such files]
+An investigation for this document wrote the text \code{this is not valid rust !!!} into three of
+those files and ran \code{cargo check --features ssr}. Zero errors mentioned \code{entrypoint};
+rustc never opened them. The files were then restored.
+\end{verified}
+
+\begin{pitfall}[The silence of dead modules]
+An undeclared \code{.rs} file produces no warning of any kind. \code{cargo check} is clean,
+\code{clippy} is clean, and your editor will happily give you completions inside a file the
+compiler is ignoring. If you are ever unsure whether a file is in the build, put a deliberate
+syntax error in it and run \code{cargo check}. Silence means it is dead.
+\end{pitfall}
+
+The current state is better --- \file{http.rs} and \file{application\_state.rs} are both declared,
+so both are compiled --- and it has traded one smell for a milder one: two declared modules that are
+empty. That is fine as scaffolding and worth watching, because an empty declared module is a
+promise. Chapter~\ref{ch:composition} takes a position on what \code{application\_state.rs} should
+contain, since a state struct at the composition root is a good idea rather than a leftover.
+
+\section{What the database looks like}
+
+The database is further along than the Rust. A PostgreSQL 17 container is running, and all four
+migrations plus Diesel's bookkeeping migration have been applied to a database named
+\code{my-site}.
+
+\begin{verified}
+\begin{lstlisting}[style=out]
+$ diesel migration list
+Migrations:
+  [X] 00000000000000_diesel_initial_setup
+  [X] 2026-08-02-211314-0000_create_portfolio_item
+  [X] 2026-08-03-231439-0000_create_publications_item
+  [X] 2026-08-03-232042-0000_create_job_experience
+  [X] 2026-08-03-233332-0000_create_personal_information
+
+$ psql -c 'select count(*) from portfolio_items'   ->  0
+  ... and 0 rows in every other table.
+\end{lstlisting}
+\end{verified}
+
+Seven tables exist and every one of them is empty. That is worth knowing before you write the
+first page, because a page that renders an empty list looks identical to a page whose query is
+broken. Chapter~\ref{ch:seed} covers seeding, and it should happen \emph{before} the first
+component, not after.
+
+\begin{pitfall}[Two databases, one of them a decoy]
+\file{docker-compose.yml} creates a database called \code{mydatabase}. Your \file{.env} points
+\code{DATABASE\_URL} at a database called \code{my-site}. Both exist on the server --- \code{my-site}
+because \code{diesel setup} created it, \code{mydatabase} because Compose did. \code{mydatabase}
+is empty and unused. Anyone who clones this repository, runs \code{docker compose up}, and trusts
+the Compose file will connect to the wrong, empty database and see nothing. This is
+defect \dnum{14}.
+\end{pitfall}
+
+\section{What is missing, stated plainly}
+
+It is easy to lose the shape of the remaining work in a list of small defects, so here is the
+shape. Four things are absent, and they are absent in a specific order of dependency:
+
+\begin{enumerate}
+  \item \textbf{No transport.} There is no server function, no route, and no HTTP endpoint that
+    returns domain data. The repositories can read from Postgres, and nothing can call the
+    repositories.
+  \item \textbf{No shared types.} Even if a transport existed, the current models cannot cross
+    it. They are compiled only in the server build, and they derive \code{Serialize} from a
+    dependency that only the server build enables. Chapter~\ref{ch:boundary} works through
+    exactly what happens.
+  \item \textbf{No presentation.} \file{src/app.rs} has one route and a counter. There are no
+    pages for portfolio, publications, experience or contact, no layout, no navigation.
+  \item \textbf{No writes.} \code{Repository<T>} offers \code{get\_all} and \code{get\_by\_id}.
+    There is no insert, update or delete anywhere in the codebase, and no path by which you could
+    author content other than by hand-writing SQL.
+\end{enumerate}
+
+Everything else --- Tailwind, tests, CI, deployment, tracing --- is genuinely optional until those
+four are done. Part~VII sequences them.
+
+% ===========================================================================
+\chapter{The stack, and who is responsible for what}
+\label{ch:stack}
+
+Six moving parts sit between a browser request and a row in Postgres. Confusion about which one
+owns a given responsibility is the most common source of misplaced code in this stack, so this
+chapter draws the boundaries once.
+
+\begin{diagram}{The stack, with each component's single responsibility. Solid arrows are
+runtime data flow; the dashed arrow is a build-time relationship.}{fig:stack}
+\begin{tikzpicture}[node distance=6mm]
+  \node[cli,minimum width=34mm] (br) {\textbf{Browser}\\[1pt]\scriptsize DOM, fetch, history};
+  \node[cli,minimum width=34mm,below=8mm of br] (wasm) {\textbf{wasm bundle}\\[1pt]\scriptsize
+    \code{leptos} (hydrate) + your \code{app.rs}};
+  \node[srv,minimum width=40mm,below=13mm of wasm] (actix) {\textbf{Actix-web 4}\\[1pt]\scriptsize
+    HTTP server, routing, static files};
+  \node[srv,minimum width=40mm,below=8mm of actix] (leptos) {\textbf{leptos + leptos\_actix}\\[1pt]\scriptsize
+    renders HTML, hosts server functions};
+  \node[srv,minimum width=40mm,below=8mm of leptos] (domain) {\textbf{your domain + repositories}\\[1pt]\scriptsize
+    business rules, queries};
+  \node[srv,minimum width=40mm,below=8mm of domain] (diesel) {\textbf{Diesel 2.3 + r2d2}\\[1pt]\scriptsize
+    typed SQL, connection pool};
+  \node[db,below=8mm of diesel,minimum width=32mm] (pg) {\textbf{PostgreSQL 17}};
+
+  \node[shared,right=16mm of wasm,minimum width=30mm,align=center] (cl) {\textbf{cargo-leptos}\\[1pt]\scriptsize
+    builds both sides,\\ runs sass/tailwind,\\ watches and reloads};
+
+  \draw[flow] (br) -- (wasm);
+  \draw[flow] (wasm) -- node[lbl,right]{HTTP} (actix);
+  \draw[flow] (actix) -- (leptos);
+  \draw[flow] (leptos) -- (domain);
+  \draw[flow] (domain) -- (diesel);
+  \draw[flow] (diesel) -- (pg);
+  \draw[dep] (cl) -- (wasm);
+  \draw[dep] (cl.east) -- ++(6mm,0) |- (actix.east);
+
+  \begin{scope}[on background layer]
+    \node[lane,fit=(actix)(diesel)(pg),inner sep=4mm,label={[tag,anchor=north east]north east:server process}] {};
+    \node[lane,fit=(br)(wasm),inner sep=3.5mm,label={[tag,anchor=north east]north east:client}] {};
+  \end{scope}
+\end{tikzpicture}
+\end{diagram}
+
+\section{The pieces, one at a time}
+
+\subsection*{Leptos 0.8 --- the reactive UI framework}
+
+Leptos is the only piece that exists on both sides of the network. You write components once, as
+Rust functions returning \code{impl IntoView}, and Leptos either renders them to an HTML string
+(on the server) or mounts them onto existing DOM and makes them interactive (in the browser).
+Which of those two things it does is chosen by a Cargo feature, not at runtime. That single fact
+is the source of most of Part~II.
+
+Leptos also owns two things people often expect Actix to own. \emph{Routing of application pages}
+is a Leptos concern --- \code{<Routes>} in \file{src/app.rs}, not \code{App::route} in
+\file{src/main.rs}. And \emph{the client--server call protocol} is a Leptos concern: the
+\code{\#[server]} macro generates the endpoint, the serialisation, and the client-side stub for
+you. You do not write controllers.
+
+\subsection*{Actix-web 4 --- the HTTP server}
+
+Actix's job in this application is narrow, and keeping it narrow is a design goal. It listens on
+a socket, serves static files out of \file{target/site}, hands unmatched requests to Leptos, and
+holds shared application state (the connection pool) so that server functions can extract it.
+It should not contain business logic and it should not contain page routes. If you find yourself
+writing an Actix handler that returns JSON for your own front end to consume, stop --- that is
+what a server function is for, and it will give you type safety across the wire that a
+hand-written JSON endpoint cannot.
+
+\subsection*{cargo-leptos --- the build orchestrator}
+
+This is the piece most worth understanding concretely, because it is doing more than it appears
+to. Version 0.3.6 is installed. When you run \code{cargo leptos watch} it:
+
+\begin{enumerate}
+  \item compiles the library target to \code{wasm32-unknown-unknown} with the \code{hydrate}
+    feature, then runs \code{wasm-bindgen} over the result;
+  \item compiles the binary target natively with the \code{ssr} feature;
+  \item compiles \file{style/main.scss} using a \code{sass} binary it downloaded itself;
+  \item copies \file{assets/} into \file{target/site/};
+  \item starts the server binary, and restarts or reloads on change.
+\end{enumerate}
+
+Point three surprises people. \code{sass} is \emph{not} installed on this machine, yet the build
+works, because cargo-leptos fetches and caches its own toolchain.
+
+\begin{verified}
+\begin{lstlisting}[style=out]
+$ command -v sass  ->  (not found)
+$ ls ~/.cache/cargo-leptos/
+  sass-1.86.0/           tailwindcss-v4.2.1/
+  wasm-bindgen-0.2.125/  wasm-bindgen-0.2.126/
+\end{lstlisting}
+\end{verified}
+
+Note the second entry. A Tailwind~4 CLI has \emph{already} been downloaded into that cache. This
+matters for Chapter~\ref{ch:tailwind}: adopting Tailwind here requires no \code{npm}, no
+\file{package.json}, and no Node dependency in your build --- cargo-leptos will manage the binary
+the same way it manages \code{sass}.
+
+\subsection*{Diesel 2.3 with r2d2 --- typed SQL and connection pooling}
+
+Diesel gives you compile-time-checked queries against the schema in \file{src/schema.rs}. It is
+worth being precise about one property that shapes the whole server design: \textbf{Diesel, as
+configured here, is synchronous}. Every query blocks the thread that issues it until Postgres
+answers. Actix and Leptos server functions are asynchronous. Reconciling those two facts is not
+optional and it is not a micro-optimisation --- Chapter~\ref{ch:blocking} explains why a direct
+call will damage your server under concurrency, and gives the two-line wrapper that fixes it.
+
+\subsection*{PostgreSQL 17 --- and \code{diesel-cli}}
+
+The database runs in Docker on port 5439. Migrations are plain SQL pairs under
+\file{migrations/}, applied by \code{diesel migration run} and reverted by
+\code{diesel migration revert}. Chapter~\ref{ch:migrations} is about the discipline that keeps
+that second command working, because right now it does not.
+
+\subsection*{Tailwind CSS --- not yet present}
+
+Currently \file{style/main.scss} is three lines of Sass. Chapter~\ref{ch:tailwind} covers the
+switch. The short version: Tailwind replaces the Sass file rather than joining it, and the change
+is four lines of \file{Cargo.toml} plus one new CSS file.
+
+\section{Where new code goes}
+
+To close the chapter, the practical form of the above. When you are about to write something and
+are unsure where it belongs, this table answers it.
+
+\begin{table}[htbp]
+\centering
+\caption{A decision table for placing new code.}
+\label{tab:placement}
+\small
+\begin{tabular}{@{}L{0.40\textwidth}L{0.54\textwidth}@{}}
+\toprule
+\textbf{You are writing\ldots} & \textbf{It belongs in\ldots} \\
+\midrule
+a page or a visual component & \file{src/ui/} (new), reached from \file{src/app.rs} \\
+a URL that a human types or bookmarks & \code{<Routes>} in \file{src/app.rs} \\
+a call from browser to server & \file{src/<domain>/api.rs} (new), \emph{ungated} \\
+a type that travels over the wire & \file{src/<domain>/dto.rs} (new), \emph{ungated} \\
+a SQL query & \file{src/<domain>/repository.rs}, gated on \code{ssr} \\
+a business rule or invariant & \file{src/<domain>/} beside the model, gated on \code{ssr} \\
+an error the UI has to display & \file{src/error.rs} (new), \emph{ungated} \\
+process startup and wiring & \file{src/main.rs}, once, before the server starts \\
+an Actix route & almost certainly nothing --- reconsider; use a server function \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The word \emph{ungated} in that table is doing a lot of work, and the reason is the subject of
+Chapter~\ref{ch:boundary}. The new files it names are laid out in full in Chapter~\ref{ch:layers}.

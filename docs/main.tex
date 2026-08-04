@@ -1,0 +1,71 @@
+\documentclass[11pt,openany]{report}
+\input{tex/preamble}
+
+\begin{document}
+
+% ===========================================================================
+%  TITLE PAGE
+% ===========================================================================
+\begin{titlepage}
+\thispagestyle{empty}
+\raggedright
+\vspace*{0.10\textheight}
+
+\begin{tikzpicture}
+  \node[srv,minimum width=26mm] (s) {server\\\scriptsize native binary};
+  \node[shared,minimum width=22mm,right=7mm of s] (d) {shared\\\scriptsize DTOs};
+  \node[cli,minimum width=26mm,right=7mm of d] (c) {client\\\scriptsize wasm bundle};
+  \node[db,left=7mm of s] (p) {\scriptsize Pg};
+  \draw[flow] (p) -- (s);
+  \draw[flow] (s) -- (d);
+  \draw[flow] (d) -- (c);
+  \draw[flowa] (c.south) .. controls +(0,-8mm) and +(0,-8mm) .. node[lbl,below]{server function} (s.south);
+\end{tikzpicture}
+
+\vspace{14mm}
+{\color{rust}\sffamily\bfseries\large egonik-site}\\[3mm]
+{\color{ink}\fontsize{31}{36}\selectfont\bfseries Architecture and\\ Continuation Guide}\\[6mm]
+{\color{slate}\fontsize{13.5}{18}\selectfont\itshape Building a personal website in fullstack Rust:\\
+the patterns to adopt, the traps already in the code,\\ and the order in which to do the remaining work.}
+
+\vspace{16mm}
+{\color{rule}\rule{\textwidth}{1pt}}\\[4mm]
+{\sffamily\small\color{slate}
+Eduardo Gonik \\[2mm]
+Revision 1 \textperiodcentered\ 4 August 2026 \\[2mm]
+Written against commit \texttt{befcba5} \textperiodcentered\ Leptos 0.8.20 \textperiodcentered\ Actix-web 4.14 \textperiodcentered\ Diesel 2.3.11 \textperiodcentered\ PostgreSQL 17}
+
+\vfill
+\begin{keyidea}
+\normalfont\small
+This is not a description of a finished system. It is a description of a \emph{half-built} one, written
+at the moment when the shape of the remaining work is still negotiable. Everything asserted here about the
+current code was checked by reading it, compiling it, or running it against the live database; the places
+where a claim rests on documentation rather than observation are marked as such.
+\end{keyidea}
+\end{titlepage}
+
+% ===========================================================================
+%  FRONT MATTER
+% ===========================================================================
+\pagenumbering{roman}
+\setcounter{page}{2}
+\microtypesetup{protrusion=false}
+\tableofcontents
+\microtypesetup{protrusion=true}
+\cleardoublepage
+\pagenumbering{arabic}
+\setcounter{page}{1}
+
+\input{tex/part1-orientation}
+\input{tex/part2-model}
+\input{tex/part3-architecture}
+\input{tex/part3b-routing-services}
+\input{tex/part4-data}
+\input{tex/part5-frontend}
+\input{tex/part6-quality}
+\input{tex/part7-review}
+\input{tex/part7-plan}
+\input{tex/appendix}
+
+\end{document}

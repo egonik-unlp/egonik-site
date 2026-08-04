@@ -1,0 +1,588 @@
+% ===========================================================================
+\chapter{Routing, and what \file{entrypoint/} is for}
+\label{ch:routing}
+
+\section{There are three kinds of route, and you only write two}
+
+The confusion about where routes live comes from the word ``route'' meaning three different things
+in this stack. Separating them answers most of the question by itself.
+
+\begin{table}[htbp]
+\centering
+\caption{The three kinds of route. Note the middle row: you never write those.}
+\label{tab:routekinds}
+\small
+\begin{tabular}{@{}L{0.24\textwidth}L{0.22\textwidth}L{0.46\textwidth}@{}}
+\toprule
+\textbf{Kind} & \textbf{Owned by} & \textbf{Where you write it} \\
+\midrule
+A URL a human visits or bookmarks & \code{leptos\_router} &
+\code{<Routes>} in \file{app.rs}. Not Actix. \\
+A browser-to-server data call & the \code{\#[server]} macro &
+\textbf{Nowhere.} The macro creates the endpoint and \code{leptos\_routes} registers it. \\
+A machine-facing HTTP endpoint & Actix &
+\file{entrypoint/routes/}. This is the only kind that belongs there. \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{keyidea}
+Server functions really do remove the need for a controller layer --- for anything your own front
+end calls. What they do \emph{not} cover is everything that is not your front end: health checks,
+crawlers, feed readers, webhooks. That residue is what \file{entrypoint/} is for, and it is small
+but permanent.
+\end{keyidea}
+
+\subsection{So what is actually left for Actix?}
+
+A short and closed list. If a new endpoint is not on it, it should probably be a server function or
+a page route instead.
+
+\begin{description}
+  \item[Health and readiness.] \code{/healthz}. Must be callable by a monitor that knows nothing
+    about Leptos, WebAssembly or your DTOs. Ch.~\ref{ch:ops}.
+  \item[Things crawlers and machines fetch.] \file{robots.txt}, \file{sitemap.xml},
+    \file{rss.xml}, \file{.well-known/*}. These are not HTML, so they are not pages; and they are
+    not called by your front end, so they are not server functions. \file{robots.txt} can be a
+    static file in \file{assets/}; \file{sitemap.xml} and \file{rss.xml} need database content, so
+    they need a handler.
+  \item[Inbound calls from third parties.] Webhooks, OAuth callbacks. A server function is the
+    wrong shape --- its request encoding is Leptos's, not the caller's.
+  \item[Streaming uploads and downloads.] A CV PDF, an image endpoint with resizing. Server
+    functions serialise their whole payload; Actix can stream.
+  \item[Middleware and mounts.] Compression, tracing, security headers, the \file{/pkg} and
+    \file{/assets} static services.
+  \item[The \code{App} factory itself.] The builder currently inlined in \file{main.rs}.
+\end{description}
+
+\begin{pitfall}[Register your own services \emph{before} \code{leptos\_routes}]
+Actix matches routes in registration order, and \code{leptos\_routes} installs a wildcard that
+catches every remaining path so the Leptos router can handle client-side URLs. Anything you register
+\emph{after} it is unreachable.
+
+The template already gets this right --- \code{Files::new("/pkg", ...)}, the \code{/assets} mount and
+\code{favicon} all come before \code{.leptos\_routes(...)} in \file{main.rs}. Keep that ordering, and
+add new services to the same group. When a new endpoint returns 404 and you are certain it is
+registered, this is the first thing to check.
+\end{pitfall}
+
+\section{A shape for \file{entrypoint/}}
+
+Your instinct that this directory holds ``the server'' is right, and it is worth stating what that
+means precisely: \textbf{\file{entrypoint/} is the process edge}. It owns how the world reaches the
+application and how the application starts, and it owns no business logic at all.
+
+\begin{lstlisting}[style=tree,caption={\file{src/entrypoint/} filled in. Everything here is
+\code{ssr}-only by nature, which \file{mod.rs} already declares correctly.}]
+src/entrypoint/
+  mod.rs                  # #[cfg(feature = "ssr")] on each child -- already correct
+  application_state.rs    # AppState: the repositories and services -- already written
+  http.rs                 # the Actix App factory, moved out of main.rs
+  routes/                 # machine-facing endpoints ONLY -- never a page, never a server fn
+    mod.rs
+    health.rs             #   GET /healthz
+    seo.rs                #   GET /sitemap.xml, /rss.xml
+  jobs/                   # scheduled work
+    mod.rs
+    schedule.rs           #   the in-process scheduler, if you choose one (see below)
+\end{lstlisting}
+
+\subsection{What goes in \file{http.rs}}
+
+Actix has a purpose-built mechanism for moving registration out of \code{main}:
+\code{App::configure}, which takes a closure over a \code{ServiceConfig}. It keeps \file{main.rs}
+about \emph{starting} the process and \file{http.rs} about \emph{what the process serves}.
+
+\begin{lstlisting}[style=rs,caption={\file{src/entrypoint/http.rs}}]
+use actix_web::web::{self, ServiceConfig};
+use crate::entrypoint::{application_state::AppState, routes};
+
+/// Everything Actix serves that is not a Leptos page or a server function.
+pub fn configure(state: AppState) -> impl FnOnce(&mut ServiceConfig) + Clone {
+    move |cfg: &mut ServiceConfig| {
+        cfg.app_data(web::Data::new(state.clone()))
+            .service(routes::health::healthz)
+            .service(routes::seo::sitemap)
+            .service(routes::seo::rss);
+    }
+}
+\end{lstlisting}
+
+\begin{lstlisting}[style=rs,caption={\file{src/main.rs} then reads as a list of decisions, not a wall.}]
+HttpServer::new(move || {
+    let routes = generate_route_list(App);
+    let leptos_options = &conf.leptos_options;
+    let site_root = leptos_options.site_root.clone().to_string();
+
+    App::new()
+        .configure(http::configure(app_state.clone()))          // <-- your endpoints, first
+        .service(Files::new("/pkg", format!("{site_root}/pkg")))
+        .service(Files::new("/assets", format!("{site_root}/assets")))
+        .service(favicon)
+        .leptos_routes(routes, { /* the shell */ })              // <-- the wildcard, last
+        .app_data(web::Data::new(leptos_options.to_owned()))
+})
+\end{lstlisting}
+
+\begin{pattern}[\code{AppState} is registered in one place]
+Note that \code{configure} is where \code{app\_data(AppState)} now lives, so the state is registered
+once and the reason is visible. \code{leptos\_actix::extract::<Data<AppState>>()} inside a server
+function keeps working unchanged --- \code{app\_data} is \code{App}-wide regardless of which builder
+call installed it.
+\end{pattern}
+
+\section{Scheduled work}
+
+You raised cron, and it is a real question because \file{src/bin/seed\_publications.rs} is exactly
+the kind of thing that wants to run on a timer. Three options, and they are genuinely different
+rather than a matter of taste.
+
+\begin{table}[htbp]
+\centering
+\caption{Where to put recurring work.}
+\label{tab:cron}
+\small
+\begin{tabular}{@{}L{0.20\textwidth}L{0.36\textwidth}L{0.36\textwidth}@{}}
+\toprule
+\textbf{Option} & \textbf{For} & \textbf{Against} \\
+\midrule
+\textbf{systemd timer} or host cron, invoking the existing binary &
+Already works --- the binary exists. Cannot take the web server down. Failures land in
+\code{journalctl}. Runs, retries and logs are the operating system's problem, not yours. &
+Needs host-level configuration, so it lives outside the repository. Awkward on a PaaS that only runs
+one process. \\
+\textbf{In-process} \code{tokio} task spawned in \code{main} &
+Nothing to configure outside the app; ships with the container; shares \code{AppState}. &
+A panic or a leak is in your web process. Runs once per replica, so it needs a lock the day you
+scale past one. No history, no retry, unless you write it. \\
+\textbf{A scheduler crate} (\code{tokio-cron-scheduler}, or \code{apalis} for a real queue) &
+Cron expressions, overlap prevention, and with \code{apalis} a persistent job store with retries. &
+A dependency and a concept for something a personal site does hourly at most. \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{pattern}[Use a systemd timer, and keep the binary]
+For this project the operating system is the right scheduler. The publication sync is idempotent
+once \S\ref{sec:idempotent} is applied, it does not need to share memory with the web server, and if
+it fails at 03:00 you want that in the system journal rather than interleaved with request logs.
+Concretely:
+\begin{lstlisting}[style=sh,caption={\file{/etc/systemd/system/egonik-sync.service} and \code{.timer}}]
+# egonik-sync.service
+[Unit]
+Description=Sync publications from OpenAlex
+[Service]
+Type=oneshot
+EnvironmentFile=/etc/egonik/env
+ExecStart=/opt/egonik/seed_publications
+
+# egonik-sync.timer
+[Unit]
+Description=Daily publication sync
+[Timer]
+OnCalendar=daily
+Persistent=true          # catch up if the machine was off
+RandomizedDelaySec=30m   # do not hammer OpenAlex on the hour
+[Install]
+WantedBy=timers.target
+\end{lstlisting}
+\code{Persistent=true} is the line that makes this better than a bare cron entry: a missed run
+executes on next boot instead of being skipped silently.
+\end{pattern}
+
+If you would rather keep it in-process --- a reasonable choice if you deploy to somewhere that runs
+exactly one container and nothing else --- the dependency-free version is a spawned task, and it
+belongs in \file{entrypoint/jobs/}:
+
+\begin{lstlisting}[style=rs,caption={\file{src/entrypoint/jobs/schedule.rs}. Note what the ordering buys.}]
+use std::time::Duration;
+
+pub fn spawn(state: AppState) {
+    actix_web::rt::spawn(async move {
+        // one tick immediately after boot, then every 24h
+        let mut ticker = tokio::time::interval(Duration::from_secs(60 * 60 * 24));
+        loop {
+            ticker.tick().await;
+            match state.publications_service.sync_from_openalex().await {
+                Ok(report) => tracing::info!(?report, "publication sync complete"),
+                // never let a job failure kill the task -- log and wait for the next tick
+                Err(e)     => tracing::error!(error = ?e, "publication sync failed"),
+            }
+        }
+    });
+}
+\end{lstlisting}
+
+\begin{pitfall}[Three ways an in-process job goes wrong]
+\textbf{It runs once per worker if you spawn it in the factory.} \code{HttpServer::new}'s closure
+runs once per worker thread --- twelve times on this machine. Spawn scheduled work \emph{beside}
+\code{HttpServer::new}, in \code{main}, exactly like the pool.
+
+\textbf{\code{interval} fires immediately on the first tick.} That is usually what you want, but it
+means a deploy loop triggers a sync on every restart. Call \code{ticker.tick().await} once before
+the loop if you would rather skip the first.
+
+\textbf{A panic inside the task is silent.} The task dies, the server keeps serving, and the job
+simply never runs again. Catch errors in the loop as above rather than using \code{?}.
+\end{pitfall}
+
+% ===========================================================================
+\chapter{Services: when a repository is not enough}
+\label{ch:services}
+
+\section{You have already written one --- it is just wearing a \code{main}}
+
+\file{src/bin/seed\_publications.rs} is the best example in the codebase of work that needs a home,
+so it is worth reading as an architecture question rather than as a script. Stripped of noise, it
+does four distinct things:
+
+\begin{lstlisting}[style=rs,caption={\file{src/bin/seed\_publications.rs}, as written --- four
+responsibilities in one \code{main}.}]
+#[tokio::main]
+async fn main() {
+    let pool = get_connection_pool();                          // 1. compose
+    let mut repo = PublicationsRepository::new(pool);
+
+    let response = reqwest::get(PUBLICATION_LOOKUP_URL)        // 2. talk to OpenAlex
+        .await.unwrap().text().await.unwrap();
+    let scientist_response: ScientistResponse =
+        serde_json::from_str(&response).unwrap();               // 3. parse THEIR shape
+
+    scientist_response.results.into_iter().for_each(|article| {
+        let insert_article: PublicationItemDto = article.into(); // 4. map to OUR shape
+        repo.create_article(insert_article).unwrap()             //    and persist, one at a time
+    });
+}
+\end{lstlisting}
+
+Steps 2, 3 and 4 are a \emph{use case}: ``synchronise my publications from OpenAlex''. It is real
+application behaviour, it has nothing to do with being a command-line program, and right now it can
+only ever be run by typing a command. Three consequences:
+
+\begin{itemize}
+  \item \textbf{It cannot be reused.} An admin ``refresh now'' button would have to copy it. A
+    scheduled job would have to copy it. Neither can call it, because it is a \code{main}.
+  \item \textbf{An executable owns your domain mapping.} \code{Article} and the
+    \code{Into<PublicationItemDto>} impl live in \file{src/bin/}, so the definition of ``how an
+    OpenAlex work becomes one of my publications'' is in a binary that the library cannot see.
+  \item \textbf{It cannot be tested.} There is no seam to insert a fake HTTP response.
+\end{itemize}
+
+\begin{keyidea}
+A repository answers ``how do I store this''. A service answers ``what does the application
+\emph{do}''. The moment a piece of behaviour involves more than one collaborator --- an HTTP client
+and a repository, or two repositories, or a rule that spans both --- it is a service, and it needs a
+name and a file.
+\end{keyidea}
+
+\section{The split: three files, one use case}
+
+\begin{diagram}{The seeder decomposed. The binary, a server function and a scheduled job all become
+thin callers of the same service.}{fig:service}
+\begin{tikzpicture}[node distance=6mm]
+  \node[box,fill=wash,minimum width=30mm] (bin) {\file{bin/seed\_publications.rs}\\[1pt]\scriptsize
+    \textasciitilde10 lines};
+  \node[shared,minimum width=30mm,right=8mm of bin] (sf) {\file{publications/server.rs}\\[1pt]\scriptsize
+    \code{\#[server] sync\_publications()}};
+  \node[box,fill=wash,minimum width=30mm,right=8mm of sf] (job) {\file{entrypoint/jobs/}\\[1pt]\scriptsize
+    the daily timer};
+
+  \node[srv,minimum width=52mm,below=11mm of sf] (svc) {\textbf{\file{publications/service.rs}}\\[1pt]\scriptsize
+    \code{PublicationsService::sync\_from\_openalex()}\\\scriptsize the use case, and the only copy of it};
+
+  \node[srv,minimum width=40mm,below left=11mm and 4mm of svc] (oa) {\file{publications/openalex.rs}\\[1pt]\scriptsize
+    outbound adapter\\\scriptsize \emph{their} types, private};
+  \node[srv,minimum width=40mm,below right=11mm and 4mm of svc] (repo) {\file{publications/repository.rs}\\[1pt]\scriptsize
+    persistence\\\scriptsize \emph{our} types};
+
+  \node[db,below=9mm of repo,minimum width=24mm] (pg) {Postgres};
+  \node[box,fill=rust!8,draw=rust!45,below=9mm of oa,minimum width=28mm] (api) {api.openalex.org};
+
+  \draw[flow] (bin) -- (svc); \draw[flow] (sf) -- (svc); \draw[flow] (job) -- (svc);
+  \draw[flow] (svc) -- (oa);  \draw[flow] (svc) -- (repo);
+  \draw[flow] (oa) -- (api);  \draw[flow] (repo) -- (pg);
+\end{tikzpicture}
+\end{diagram}
+
+\subsection{\file{openalex.rs} --- the outbound adapter}
+
+The types \code{ScientistResponse}, \code{Metadata} and \code{Article} describe \emph{OpenAlex's}
+API, not your domain. They belong in one file, and they should be private to it, so that the rest of
+the codebase cannot accidentally start depending on a third party's field names.
+
+\begin{lstlisting}[style=rs,caption={\file{src/publications/openalex.rs}}]
+use serde::Deserialize;
+use crate::publications::dto::PublicationItemDto;
+
+#[derive(Debug, Deserialize)]
+struct WorksResponse { meta: Meta, results: Vec<Work> }     // private
+#[derive(Debug, Deserialize)]
+struct Meta { count: i32 }
+#[derive(Debug, Deserialize)]
+struct Work {
+    id: String,                    // stable OpenAlex URI -- see the note on keys below
+    title: Option<String>,         // OpenAlex really does return nulls here
+    publication_year: Option<i32>,
+    doi: Option<String>,
+}
+
+// From, not Into. You get Into free, and clippy stops complaining.
+impl From<Work> for PublicationItemDto { /* ... */ }
+
+#[derive(Debug, Clone)]
+pub struct OpenAlexClient { http: reqwest::Client, author_id: String }
+
+impl OpenAlexClient {
+    pub fn new(author_id: impl Into<String>) -> Self {
+        Self { http: reqwest::Client::new(), author_id: author_id.into() }
+    }
+
+    /// Returns publications in OUR shape. Callers never see a `Work`.
+    pub async fn works_by_author(&self) -> Result<Vec<PublicationItemDto>, SyncError> {
+        let url = format!(
+            "https://api.openalex.org/works?filter=authorships.author.id:{}\
+             &select=id,title,publication_year,doi&per-page=200",
+            self.author_id
+        );
+        let body: WorksResponse = self.http.get(url).send().await?.json().await?;
+        Ok(body.results.into_iter().map(Into::into).collect())
+    }
+}
+\end{lstlisting}
+
+\begin{pitfall}[Two latent bugs in the current fetch, both in the type declarations]
+\code{Article} declares \code{title: String}, \code{doi: String} and
+\code{publication\_year: i32} --- all required. OpenAlex returns \code{null} for any of them: works
+without a DOI are common, and untitled records exist. When one appears,
+\code{serde\_json::from\_str} fails, and the \code{.unwrap()} on the next line aborts the whole
+sync --- having already inserted the works it processed before, since there is no transaction.
+Declare them \code{Option<...>} and decide per field whether to default or skip.
+
+Second: \code{meta.count} is parsed and never read, while \code{per-page=200} caps the response.
+If you ever publish a 201st paper the sync will silently start truncating. Either assert
+\code{count <= 200} and fail loudly, or paginate with \code{\&page=N}.
+\end{pitfall}
+
+\begin{pattern}[Key the sync on OpenAlex's \code{id}, not the DOI]
+The query already selects \code{id}, which is a stable OpenAlex URI present on every record. The DOI
+is absent on some and can change. Store the \code{id} in a dedicated
+\code{external\_id TEXT UNIQUE} column and make that the conflict target in
+\S\ref{sec:idempotent}. This is what turns a re-run from ``duplicate everything'' into ``update
+what changed''.
+\end{pattern}
+
+\subsection{\file{service.rs} --- the use case}
+
+\begin{lstlisting}[style=rs,caption={\file{src/publications/service.rs}}]
+use crate::publications::{dto::PublicationItemDto, openalex::OpenAlexClient,
+                          repository::PublicationsRepository};
+
+#[derive(Debug, Clone)]                     // cheap: both fields are Arc-backed
+pub struct PublicationsService {
+    repo: PublicationsRepository,
+    openalex: OpenAlexClient,
+}
+
+#[derive(Debug)]
+pub struct SyncReport { pub fetched: usize, pub written: usize }
+
+impl PublicationsService {
+    pub fn new(repo: PublicationsRepository, openalex: OpenAlexClient) -> Self {
+        Self { repo, openalex }
+    }
+
+    /// The use case. One copy, three callers.
+    pub async fn sync_from_openalex(&self) -> Result<SyncReport, SyncError> {
+        let incoming = self.openalex.works_by_author().await?;
+        let written = self.repo.upsert_many(&incoming).await?;   // ONE round trip, idempotent
+        Ok(SyncReport { fetched: incoming.len(), written })
+    }
+
+    pub async fn list_newest_first(&self) -> Result<Vec<PublicationItemDto>, SyncError> {
+        Ok(self.repo.list_newest_first().await?)
+    }
+}
+\end{lstlisting}
+
+Note what the service does \emph{not} do: it does not build a pool, read an environment variable, or
+know that it might be called from a command line. It receives its collaborators and exposes
+behaviour. That is the whole pattern.
+
+\subsection{The three callers}
+
+\begin{lstlisting}[style=rs,caption={The binary becomes an adapter: compose, call, report, exit.}]
+// src/bin/seed_publications.rs
+#[actix_web::main]
+async fn main() -> anyhow::Result<()> {
+    dotenvy::dotenv().ok();
+    tracing_subscriber::fmt::init();
+
+    let cfg   = AppConfig::load()?;
+    let pool  = build_pool(&cfg)?;
+    let svc   = PublicationsService::new(
+        PublicationsRepository::new(pool),
+        OpenAlexClient::new(cfg.openalex_author_id),
+    );
+
+    let report = svc.sync_from_openalex().await?;   // no unwrap; `?` to a Result main
+    tracing::info!(?report, "sync complete");
+    Ok(())
+}
+\end{lstlisting}
+
+\begin{lstlisting}[style=rs,caption={And the server function, for an admin ``refresh'' button.}]
+// src/publications/server.rs
+#[server]
+pub async fn sync_publications() -> Result<usize, ServerFnError> {
+    use crate::entrypoint::application_state::AppState;
+    use actix_web::web::Data;
+    let state: Data<AppState> = leptos_actix::extract().await?;
+    let report = state.publications_service.sync_from_openalex().await?;
+    Ok(report.written)
+}
+\end{lstlisting}
+
+\begin{pitfall}[If you expose that as a server function, it is a public endpoint]
+Anyone can \code{curl} it, repeatedly, and each call hits OpenAlex. Either keep the sync
+out of the web process entirely (the systemd timer), or put an authorisation check in the body and
+rate-limit it. This is the concrete form of the warning in \S\ref{ch:loading}.
+\end{pitfall}
+
+\section{Does every slice need a service?}
+
+No, and adding one everywhere would be ceremony. The test is whether there is behaviour to name.
+
+\begin{table}[htbp]
+\centering
+\caption{When a server function may talk to a repository directly.}
+\label{tab:needservice}
+\small
+\begin{tabular}{@{}L{0.44\textwidth}L{0.50\textwidth}@{}}
+\toprule
+\textbf{Server fn calls the repository directly} & \textbf{Server fn calls a service} \\
+\midrule
+one query, no decisions --- ``list the publications'', ``get this portfolio item by slug'' &
+external I/O (OpenAlex, e-mail, an image resizer) \\
+the mapping is a mechanical \code{From} &
+more than one repository, or one repository more than once \\
+&
+anything that must be atomic across tables (portfolio item $+$ its tags) \\
+&
+an invariant that is not a database constraint \\
+&
+anything that needs to run from more than one entry point \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+So: \code{publications} earns a service today, because of OpenAlex. \code{portfolio} will earn one
+when writes arrive, because an item and its tags must be inserted together.
+\code{personal\_information} may never need one.
+
+\subsection{Where services live in \code{AppState}}
+
+Once a slice has a service, \code{AppState} should hold the \emph{service} and the service should
+hold the repository --- rather than exposing both and letting call sites choose.
+
+\begin{lstlisting}[style=rs,caption={\file{application\_state.rs}, evolved. Same shape you already
+built, one layer up.}]
+#[derive(Debug, Clone)]
+pub struct AppState {
+    pub publications: PublicationsService,          // has a service: expose the service
+    pub portfolio_items_repository: PortfolioItemsRepository,   // no service yet: repository is fine
+    pub job_experience_repository: JobExperienceItemRepository,
+    pub personal_information_repository: PersonalInformationRepository,
+}
+
+impl AppState {
+    pub fn new(pool: DbPool, cfg: &AppConfig) -> Self {
+        Self {
+            publications: PublicationsService::new(
+                PublicationsRepository::new(pool.clone()),
+                OpenAlexClient::new(cfg.openalex_author_id.clone()),
+            ),
+            portfolio_items_repository: PortfolioItemsRepository::new(pool.clone()),
+            job_experience_repository: JobExperienceItemRepository::new(pool.clone()),
+            personal_information_repository: PersonalInformationRepository::new(pool),
+        }
+    }
+}
+\end{lstlisting}
+
+The migration is incremental and does not require a rewrite: add services one slice at a time, and
+when a slice has one, stop exposing its repository.
+
+\section{Making the sync idempotent}
+\label{sec:idempotent}
+
+This is the part that matters most in practice, because the seeder is going to be run more than once.
+
+\begin{verified}[Verified: a second run duplicates everything]
+\begin{lstlisting}[style=out]
+$ psql -d my-site -tAc 'select count(*), count(distinct title), count(distinct link)
+                        from publication_items'
+8|7|8
+
+$ psql -d my-site -c '\d publication_items'
+Indexes:
+    "publication_items_pkey" PRIMARY KEY, btree (id)     <-- and nothing else
+\end{lstlisting}
+Eight rows, no unique constraint on \code{title} or \code{link}, and
+\code{insert\_into(...).values(...)} with no \code{on\_conflict}. Nothing prevents the next run from
+inserting all eight again. (Note also that seven distinct titles across eight rows means two records
+already share a title --- so \code{title} is not a usable key even if you constrained it.)
+\end{verified}
+
+Two changes make the sync safe to run on a timer. First, give the table a real external key:
+
+\begin{lstlisting}[style=sql]
+ALTER TABLE publication_items ADD COLUMN external_id TEXT;
+UPDATE publication_items SET external_id = link WHERE external_id IS NULL;  -- backfill
+ALTER TABLE publication_items ALTER COLUMN external_id SET NOT NULL;
+ALTER TABLE publication_items ADD CONSTRAINT publication_items_external_id_key
+  UNIQUE (external_id);
+\end{lstlisting}
+
+Second, make the write an upsert --- and a single one, rather than one statement per row:
+
+\begin{lstlisting}[style=rs,caption={\file{repository.rs}: one round trip, idempotent, and no
+\code{\&mut self}.}]
+use diesel::upsert::excluded;
+
+pub async fn upsert_many(&self, items: &[PublicationItemDto]) -> Result<usize, RepoError> {
+    use crate::schema::publication_items::dsl::*;
+    let rows: Vec<PublicationItemRow> = items.iter().cloned().map(Into::into).collect();
+    let pool = self.pool.clone();
+
+    let n = actix_web::web::block(move || {
+        let mut conn = pool.get()?;                 // inside the closure -- Ch. 10
+        diesel::insert_into(publication_items)
+            .values(&rows)                          // ONE statement for all rows
+            .on_conflict(external_id)
+            .do_update()
+            .set((
+                title.eq(excluded(title)),
+                year.eq(excluded(year)),
+                journal.eq(excluded(journal)),
+                link.eq(excluded(link)),
+            ))
+            .execute(&mut conn)
+    })
+    .await??;
+
+    Ok(n)
+}
+\end{lstlisting}
+
+\begin{why}[Why upsert rather than ``delete all, then insert''?]
+Truncate-and-reload is tempting and looks simpler. It is worse for three reasons: it briefly empties
+the table, so a page load during the sync renders nothing; it destroys any local edits, which
+matters as soon as you hand-write an abstract OpenAlex does not have; and it churns the primary
+keys, which breaks any URL or foreign key pointing at a publication. An upsert keyed on the external
+id preserves identity, which is the property you actually want.
+
+Note also the batch: one \code{insert\_into(...).values(\&rows)} is a single statement and a single
+network round trip, where the current \code{for\_each} does one insert per publication. At eight rows
+this is invisible; it is the difference between a sync that takes 20\,ms and one that takes two
+seconds when you have 200 papers.
+\end{why}

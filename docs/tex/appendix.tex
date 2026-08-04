@@ -1,0 +1,174 @@
+% ===========================================================================
+\appendix
+\part{Reference}
+% ===========================================================================
+
+\chapter{Command reference}
+
+\section{Daily loop}
+
+\begin{lstlisting}[style=sh]
+docker compose up -d db                  # the database must be running first
+cargo leptos watch                       # builds both programs, serves on :3000, reloads
+cargo leptos watch -vv                   # ... and shows the sass/tailwind command lines
+\end{lstlisting}
+
+\section{The two-build check --- run both, always}
+
+\begin{lstlisting}[style=sh]
+cargo check --no-default-features --features ssr
+cargo check --lib --no-default-features --features hydrate --target wasm32-unknown-unknown
+
+# NOT this: it succeeds while checking neither program (see Chapter 7)
+# cargo check
+\end{lstlisting}
+
+\section{Migrations}
+
+\begin{lstlisting}[style=sh]
+diesel migration generate create_talks   # writes an up.sql / down.sql pair
+diesel migration run                     # apply pending
+diesel migration revert                  # roll back the most recent
+diesel migration redo                    # revert + re-apply: THE step that proves down.sql works
+diesel migration redo -a                 # ... for every migration
+diesel migration list                    # what is applied
+diesel database reset                    # drop, create, run all -- destroys data
+diesel print-schema > src/schema.rs      # regenerate; commit with the migration
+diesel print-schema | diff -u src/schema.rs -    # is schema.rs stale?
+\end{lstlisting}
+
+\section{Database}
+
+\begin{lstlisting}[style=sh]
+psql "$DATABASE_URL"                     # a shell
+psql "$DATABASE_URL" -c '\dt'            # list tables
+psql "$DATABASE_URL" -c '\d+ tags'       # one table: types, defaults, indexes, constraints
+psql "$DATABASE_URL" -c '\ds'            # list sequences -- how defect D1 was found
+psql "$DATABASE_URL" -f seeds/dev_seed.sql
+\end{lstlisting}
+
+\section{Release and run}
+
+\begin{lstlisting}[style=sh]
+cargo leptos build --release
+
+# the binary needs its environment -- see Chapter 7
+LEPTOS_OUTPUT_NAME=egonik-site \
+LEPTOS_SITE_ROOT=target/site \
+LEPTOS_ENV=PROD \
+./target/release/egonik-site
+\end{lstlisting}
+
+\section{Diagnostics}
+
+\begin{lstlisting}[style=sh]
+# what is actually in the browser bundle?
+cargo tree --target wasm32-unknown-unknown --no-default-features --features hydrate --depth 1
+
+# why is this crate in the wasm build?
+cargo tree --target wasm32-unknown-unknown --no-default-features --features hydrate -i dotenvy
+
+# did hydration happen?
+curl -s -o /dev/null -w '%{http_code}\n' localhost:3000/pkg/egonik-site.js   # must be 200
+
+# is the page really server-rendered, or an empty shell?
+curl -s localhost:3000/publications | grep -c '<li'
+
+# does a missing page really 404?
+curl -s -o /dev/null -w '%{http_code}\n' localhost:3000/nonexistent
+
+# is a file in the build at all?  (put a syntax error in it; silence means dead)
+cargo check --no-default-features --features ssr
+\end{lstlisting}
+
+\section{This document}
+
+\begin{lstlisting}[style=sh]
+cd docs && tectonic -X compile main.tex        # produces main.pdf
+\end{lstlisting}
+
+% ===========================================================================
+\chapter{Glossary}
+
+\begin{description}
+  \item[SSR --- server-side rendering] Running your components on the server to produce HTML. In
+    this project it is a Cargo feature, \code{ssr}, not a runtime mode.
+
+  \item[Hydration] The browser taking over server-rendered HTML: attaching event listeners and
+    reconnecting reactivity without re-creating the DOM. Enabled by the \code{hydrate} feature. If
+    it fails, the page looks correct and does nothing --- Chapter~\ref{ch:runcontract}.
+
+  \item[CSR --- client-side rendering] Shipping an empty shell and building the page entirely in the
+    browser. The \code{csr} feature. Not used here, and its binary target does not currently
+    compile.
+
+  \item[Server function] An \code{async fn} marked \code{\#[server]}. The macro compiles the body
+    into the server only, and replaces it on the client with an HTTP call. It is a
+    \textbf{public endpoint}, not private RPC.
+
+  \item[DTO --- data transfer object] A plain serde-serialisable struct that crosses the network.
+    Distinct from the Diesel row struct by design --- Chapter~\ref{ch:dto}.
+
+  \item[Resource] Leptos's async-data primitive for \emph{reads}. Runs during SSR and serialises its
+    result into the HTML so hydration does not refetch. Contrast \code{LocalResource}, which does
+    not run during SSR at all.
+
+  \item[Action] Leptos's async primitive for \emph{writes}. Runs when dispatched, never during
+    server rendering.
+
+  \item[Suspense / Transition] Boundaries that render a fallback while nested resources load.
+    \code{Suspense} shows the fallback on every reload; \code{Transition} only on the first.
+
+  \item[Hydration mismatch] The server's markup and the client's first render disagreeing, usually
+    from something non-deterministic in a \code{view!}. Produces inexplicable behaviour rather than
+    an error.
+
+  \item[r2d2 pool] A connection pool. \code{Arc}-backed, so \code{Clone} is cheap and
+    \code{\&self} suffices; never wrap it in another \code{Arc}.
+
+  \item[Blocking the runtime] Calling synchronous code (all of Diesel) inside an async task, holding
+    a worker thread that cannot then serve anyone else. Fixed with \code{web::block} ---
+    Chapter~\ref{ch:blocking}.
+
+  \item[Composition root] The one place that knows how everything is wired: \file{main.rs}. Config
+    is loaded there, the pool is built there, nothing below it reads the environment.
+
+  \item[Migration] A reversible \emph{pair} of SQL scripts. If \code{down.sql} does not work, it is
+    not a migration --- Chapter~\ref{ch:migrations}.
+\end{description}
+
+% ===========================================================================
+\chapter{Sources}
+
+Claims in this document come from one of three places, and it is worth being able to tell which.
+
+\begin{description}
+  \item[Observation.] Anything in a \emph{Verified} box was run on this machine against this
+    repository, this database, and the installed toolchain (rustc 1.93.1, cargo-leptos 0.3.6,
+    PostgreSQL 17 on port 5439). Quoted output is real, occasionally trimmed for width.
+
+  \item[Reading the source.] Behaviour of cargo-leptos 0.3.6 (the Tailwind pipeline, the hardcoded
+    \code{v4.2.1}, the CSS concatenation order, the ``Done'' substring check) and of
+    \code{leptos\_actix} 0.8.7 (that \code{leptos\_routes} registers server-function paths itself,
+    that \code{extract} is \code{use\_context::<Request>()} plus \code{T::extract}) was taken from
+    the published crate sources rather than from prose documentation.
+
+  \item[Documentation.] The rest: the Leptos book (\code{book.leptos.dev}), \code{docs.rs} for
+    \code{leptos} 0.8.20, \code{leptos\_actix} 0.8.7, \code{server\_fn} 0.8.13, \code{diesel} 2.3,
+    \code{actix-web} 4, \code{r2d2}, \code{tokio}; the Actix databases guide; the Tailwind v4
+    source-detection documentation; the Rust API Guidelines; and the official
+    \code{leptos-rs/start-actix} and \code{start-axum-workspace} templates.
+\end{description}
+
+Version numbers current as of \textbf{4 August 2026}. The three that will matter when they change:
+\code{leptos} 0.8.20 (0.9 is in beta and will move \code{Resource} and error APIs),
+\code{cargo-leptos} 0.3.6 (its pinned Tailwind version is a build-behaviour change), and
+\code{diesel-async} 0.9.2 (still 0.x; revisit only if connection acquisition ever becomes a
+measured bottleneck).
+
+\begin{keyidea}
+Where this document and the code disagree, the code is right and this document is out of date. It
+was written against commit \texttt{befcba5} plus the uncommitted work in progress, and the working
+tree moved three times during the writing --- which is a good sign about the project and a caution
+about the document.
+\end{keyidea}
