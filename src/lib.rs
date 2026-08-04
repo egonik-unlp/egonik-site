@@ -1,4 +1,5 @@
 pub mod app;
+
 pub mod core;
 pub mod database;
 pub mod entrypoint;
@@ -7,7 +8,9 @@ pub mod personal_information;
 pub mod portfolio;
 pub mod publications;
 
+#[cfg(feature = "ssr")]
 pub mod schema;
+
 #[cfg(feature = "hydrate")]
 #[wasm_bindgen::prelude::wasm_bindgen]
 pub fn hydrate() {

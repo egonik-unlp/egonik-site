@@ -1,12 +1,20 @@
 use anyhow::Context;
 use diesel::{
+    dsl::insert_into,
     query_dsl::methods::{FilterDsl, SelectDsl},
     ExpressionMethods, RunQueryDsl, SelectableHelper,
 };
 
-use crate::{core::Repository, database::connection::DbPool, publications::model::PublicationItem};
+use crate::{
+    core::Repository,
+    database::connection::DbPool,
+    publications::{
+        dto::PublicationItemDto,
+        model::{PublicationItem, PublicationItemRow},
+    },
+};
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct PublicationsRepository {
     pool: DbPool,
 }
@@ -17,7 +25,7 @@ impl PublicationsRepository {
     }
 }
 
-impl Repository<PublicationItem> for PublicationsRepository {
+impl Repository<PublicationItem, PublicationItemDto> for PublicationsRepository {
     fn get_all(&mut self) -> anyhow::Result<Vec<PublicationItem>> {
         let mut conn = self
             .pool
@@ -39,5 +47,17 @@ impl Repository<PublicationItem> for PublicationsRepository {
             .select(PublicationItem::as_select())
             .get_result(&mut conn)
             .context("Can't get publication item from db")
+    }
+
+    fn create_article(&mut self, new_article: PublicationItemDto) -> anyhow::Result<()> {
+        use crate::schema::publication_items;
+        use publication_items::dsl::*;
+        let mut conn = self.pool.get().context("Couldn't get conn from pool")?;
+        let value: PublicationItemRow = new_article.into();
+        insert_into(publication_items)
+            .values(&value)
+            .execute(&mut conn)
+            .context("Error creating article")?;
+        Ok(())
     }
 }

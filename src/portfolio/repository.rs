@@ -4,9 +4,13 @@ use diesel::{
     ExpressionMethods, RunQueryDsl, SelectableHelper,
 };
 
-use crate::{core::Repository, database::connection::DbPool, portfolio::model::PortfolioItem};
+use crate::{
+    core::Repository,
+    database::connection::DbPool,
+    portfolio::{dto::PortfolioItemDto, model::PortfolioItem},
+};
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct PortfolioItemsRepository {
     pool: DbPool,
 }
@@ -17,7 +21,7 @@ impl PortfolioItemsRepository {
     }
 }
 
-impl Repository<PortfolioItem> for PortfolioItemsRepository {
+impl Repository<PortfolioItem, PortfolioItemDto> for PortfolioItemsRepository {
     fn get_all(&mut self) -> anyhow::Result<Vec<PortfolioItem>> {
         use crate::schema::portfolio_items;
         let mut conn = self
@@ -40,5 +44,8 @@ impl Repository<PortfolioItem> for PortfolioItemsRepository {
             .select(PortfolioItem::as_select())
             .get_result(&mut conn)
             .context("Can't get publication item from db")
+    }
+    fn create_article(&mut self, article: PortfolioItemDto) -> anyhow::Result<()> {
+        todo!()
     }
 }

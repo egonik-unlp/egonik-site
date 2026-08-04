@@ -3,24 +3,28 @@
 async fn main() -> std::io::Result<()> {
     use actix_files::Files;
     use actix_web::*;
-    use leptos::prelude::*;
-    use leptos::config::get_configuration;
-    use leptos_meta::MetaTags;
-    use leptos_actix::{generate_route_list, LeptosRoutes};
     use egonik_site::app::*;
+    use egonik_site::database::connection::get_connection_pool;
+    use egonik_site::entrypoint::application_state::AppState;
+    use leptos::config::get_configuration;
+    use leptos::prelude::*;
+    use leptos_actix::{generate_route_list, LeptosRoutes};
+    use leptos_meta::MetaTags;
 
     let conf = get_configuration(None).unwrap();
     let addr = conf.leptos_options.site_addr;
 
+    let pool = get_connection_pool();
+    let app_state = AppState::new(pool);
     HttpServer::new(move || {
+    let routes = generate_route_list(App);
         // Generate the list of routes in your Leptos App
-        let routes = generate_route_list(App);
         let leptos_options = &conf.leptos_options;
         let site_root = leptos_options.site_root.clone().to_string();
-
         println!("listening on http://{}", &addr);
 
         App::new()
+            .app_data(web::Data::new(app_state.clone()))
             // serve JS/WASM/CSS from `pkg`
             .service(Files::new("/pkg", format!("{site_root}/pkg")))
             // serve other assets from the `assets` directory

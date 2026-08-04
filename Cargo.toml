@@ -26,13 +26,16 @@ wasm-bindgen = "0.2.106"
 chrono = { version = "0.4.45", features = ["serde"] }
 dotenvy = "0.15.7"
 anyhow = "1.0.104"
-
+tokio = { version = "1.53.1", features = ["full"], optional = true }
+reqwest = { version = "0.13.4", features = ["json"], optional = true }
 [features]
 ssr = [
   "dep:actix-files",
   "dep:actix-web",
   "dep:leptos_actix",
   "dep:diesel",
+  "dep:reqwest",
+  "dep:tokio",
   "dep:serde",
   "dep:serde_json",
   "leptos/ssr",
@@ -64,6 +67,7 @@ style-file = "style/main.scss"
 # The assets-dir cannot have a sub directory with the same name/path as site-pkg-dir.
 #
 # Optional. Env: LEPTOS_ASSETS_DIR.
+bin-target = "egonik-site"
 assets-dir = "assets"
 # The IP and port (ex: 127.0.0.1:3000) where the server serves the content. Use it in your server setup.
 site-addr = "127.0.0.1:3000"

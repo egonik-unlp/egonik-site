@@ -5,11 +5,12 @@ use diesel::{
 };
 
 use crate::{
-    core::Repository, database::connection::DbPool,
-    personal_information::model::PersonalInformation,
+    core::Repository,
+    database::connection::DbPool,
+    personal_information::{dto::PersonalInformationDto, model::PersonalInformation},
 };
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct PersonalInformationRepository {
     pool: DbPool,
 }
@@ -20,7 +21,7 @@ impl PersonalInformationRepository {
     }
 }
 
-impl Repository<PersonalInformation> for PersonalInformationRepository {
+impl Repository<PersonalInformation, PersonalInformationDto> for PersonalInformationRepository {
     fn get_all(&mut self) -> anyhow::Result<Vec<PersonalInformation>> {
         use crate::schema::personal_informations;
         let mut conn = self
@@ -43,5 +44,8 @@ impl Repository<PersonalInformation> for PersonalInformationRepository {
             .select(PersonalInformation::as_select())
             .get_result(&mut conn)
             .context("Can't get publication item from db")
+    }
+    fn create_article(&mut self, article: PersonalInformationDto) -> anyhow::Result<()> {
+        todo!()
     }
 }
