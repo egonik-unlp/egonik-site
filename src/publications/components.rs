@@ -38,16 +38,29 @@ pub fn ServerButton() -> impl IntoView {
 
                         Some(Ok(publications)) => {
                             view! {
-                                <ul>
+                                    <table>
+                                    <tr>
+                                    <th>"title"</th>
+                                    <th>"abs"</th>
+                                    <th>"year"</th>
+                                    <th>"journal"</th>
+                                    <th>"link"</th>
+                                    </tr>
                                     {publications
                                         .into_iter()
                                         .map(|publication| {
                                             view! {
-                                                <li>{publication}</li>
+                                    <tr>
+                                                <td>{publication.title}</td>
+                                                <td>{publication.abs}</td>
+                                                <td>{publication.year}</td>
+                                                <td>{publication.journal}</td>
+                                                <td>{publication.link}</td>
+                                    </tr>
                                             }
                                         })
                                         .collect_view()}
-                                </ul>
+                                    </table>
                             }
                             .into_any()
                         }

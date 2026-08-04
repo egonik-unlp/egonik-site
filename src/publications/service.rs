@@ -43,8 +43,21 @@ impl PublicationsService {
         Self { repo }
     }
 
-    pub async fn get_all_publications(&mut self) -> anyhow::Result<Vec<PublicationItem>> {
-        self.repo.get_all()
+    pub async fn get_all_publications(&mut self) -> anyhow::Result<Vec<PublicationItemDto>> {
+        let publications_db = self.repo.get_all()?;
+        let publications_type = publications_db
+            .into_iter()
+            .map(|publication| {
+                PublicationItemDto::new(
+                    publication.title,
+                    publication.abs,
+                    publication.year,
+                    publication.journal,
+                    publication.link,
+                )
+            })
+            .collect();
+        Ok(publications_type)
     }
 
     pub async fn sync_publication_history(&mut self) {
