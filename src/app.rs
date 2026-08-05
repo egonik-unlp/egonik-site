@@ -1,3 +1,5 @@
+use crate::personal_information::components::{WhoAmI, WhoAmIContact};
+use crate::personal_information::server::get_full_personal_info;
 use crate::publications::components::ServerButton;
 use leptos::prelude::*;
 use leptos_meta::{provide_meta_context, Stylesheet, Title};
@@ -37,12 +39,33 @@ fn HomePage() -> impl IntoView {
     // Creates a reactive value to update the button
     let count = RwSignal::new(0);
     let on_click = move |_| *count.write() += 1;
-
+    let personal = Resource::new(
+        move || count.get(),
+        |_| async move { get_full_personal_info().await },
+    );
     view! {
-        <h1>"Welcome to Leptos!"</h1>
-        <button on:click=on_click>"Click Me: " {count}</button>
+            <h1>"Welcome to Leptos!"</h1>
+            <button on:click=on_click>"Click Me: " {count}</button>
+          <ErrorBoundary
+            fallback=move |errors| {
+            view! {
+                <p>
+            {format!("Errors produced during loading: {:?}", errors.get())}
+                </p>
+            }
+        }
+        >
+            <Suspense
+            fallback=move || view! { <p>"Loading..."</p> }
+            >
+    {move || personal.and_then(|(personal_information, contact_information)| view! {
+                <WhoAmIContact personal_information = personal_information.clone() contact_information = contact_information.clone()/>
+        }  ) }
+            </Suspense>
+
+        </ErrorBoundary>
         <ServerButton/>
-    }
+        }
 }
 
 /// 404 - Not Found

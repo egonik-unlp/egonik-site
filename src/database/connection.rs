@@ -15,3 +15,16 @@ pub fn get_connection_pool() -> DbPool {
         .build(manager)
         .expect("Could not build connection pool")
 }
+
+pub async fn interact<F, T>(pool: &DbPool, f: F) -> anyhow::Result<T>
+where
+    F: FnOnce(&mut PgConnection) -> anyhow::Result<T> + 'static + Send,
+    T: Send + 'static,
+{
+    let pool = pool.clone();
+    tokio::task::spawn_blocking(move || {
+        let mut conn = pool.get()?;
+        f(&mut conn)
+    })
+    .await?
+}

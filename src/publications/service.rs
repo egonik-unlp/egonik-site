@@ -42,7 +42,7 @@ impl PublicationsService {
         Self { repo }
     }
 
-    pub async fn get_all_publications(&mut self) -> anyhow::Result<Vec<PublicationItemDto>> {
+    pub async fn get_all_publications(mut self) -> anyhow::Result<Vec<PublicationItemDto>> {
         let publications_db = self.repo.get_all()?;
         let publications_type = publications_db
             .into_iter()
@@ -59,7 +59,7 @@ impl PublicationsService {
         Ok(publications_type)
     }
 
-    pub async fn sync_publication_history(&mut self) {
+    pub async fn sync_publication_history(mut self) {
         let response = reqwest::get(PUBLICATION_LOOKUP_URL)
             .await
             .unwrap()

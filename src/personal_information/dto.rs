@@ -1,17 +1,18 @@
-#[derive(Debug, Clone)]
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct PersonalInformationDto {
-    id: i32,
-    name: String,
-    surname: String,
-    image_url: String,
-    // birth_date: NaiveDate,
+    pub id: i32,
+    pub name: String,
+    pub surname: String,
+    pub image_url: String,
+    // pub birth_date:DefaultHeaders ,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ContactInformationDto {
-    personal_information: PersonalInformationDto,
-    github: String,
-    email: String,
-    instagram: String,
-    linked_in: String,
+    pub github: String,
+    pub email: String,
+    pub instagram: String,
+    pub linked_in: String,
 }

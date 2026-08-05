@@ -1,8 +1,6 @@
 use leptos::prelude::*;
 
-use crate::{
-    personal_information::dto::PersonalInformationDto, publications::dto::PublicationItemDto,
-};
+use crate::publications::dto::PublicationItemDto;
 
 #[server]
 pub async fn get_all_publications() -> Result<Vec<PublicationItemDto>, ServerFnError> {

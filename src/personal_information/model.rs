@@ -2,7 +2,9 @@ use chrono::NaiveDate;
 use diesel::prelude::*;
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Deserialize, Serialize, Selectable, Queryable)]
+use crate::personal_information::dto::{ContactInformationDto, PersonalInformationDto};
+
+#[derive(Debug, Deserialize, Serialize, Selectable, Queryable, Identifiable)]
 #[diesel(check_for_backend(diesel::pg::Pg))]
 #[diesel(table_name = crate::schema::personal_informations)]
 pub struct PersonalInformation {
@@ -13,10 +15,28 @@ pub struct PersonalInformation {
     pub birth_date: NaiveDate,
 }
 
-#[derive(Debug, Deserialize, Serialize, Associations, Selectable, Queryable)]
+impl Into<PersonalInformationDto> for PersonalInformation {
+    fn into(self) -> PersonalInformationDto {
+        let PersonalInformation {
+            id,
+            name,
+            surname,
+            image_url,
+            birth_date,
+        } = self;
+        PersonalInformationDto {
+            id,
+            name,
+            surname,
+            image_url,
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, Serialize, Associations, Selectable, Queryable, Identifiable)]
 #[diesel(check_for_backend(diesel::pg::Pg))]
-#[diesel(belongs_to(PersonalInformation,))]
 #[diesel(table_name = crate::schema::contact_informations)]
+#[diesel(belongs_to(PersonalInformation))]
 pub struct ContactInformation {
     pub id: i32,
     pub personal_information_id: i32,
@@ -26,7 +46,26 @@ pub struct ContactInformation {
     pub linked_in: String,
 }
 
-#[derive(Debug, Deserialize, Serialize, Insertable)]
+impl Into<ContactInformationDto> for ContactInformation {
+    fn into(self) -> ContactInformationDto {
+        let ContactInformation {
+            id,
+            personal_information_id,
+            github,
+            email,
+            instagram,
+            linked_in,
+        } = self;
+        ContactInformationDto {
+            github,
+            email,
+            instagram,
+            linked_in,
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, Serialize, Insertable, AsChangeset, Clone)]
 #[diesel(table_name = crate::schema::personal_informations)]
 pub struct PersonalInformationRow {
     id: i32,
@@ -54,7 +93,7 @@ impl PersonalInformationRow {
     }
 }
 
-#[derive(Debug, Deserialize, Serialize, Insertable)]
+#[derive(Debug, Clone, Deserialize, Serialize, Insertable)]
 #[diesel(table_name = crate::schema::contact_informations)]
 pub struct ContactInformationRow {
     pub personal_information_id: i32,

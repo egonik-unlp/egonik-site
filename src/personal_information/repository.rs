@@ -1,12 +1,12 @@
-use anyhow::Context;
+use anyhow::{Context, Ok};
 use diesel::{
     insert_into,
     query_dsl::methods::{FilterDsl, SelectDsl},
-    ExpressionMethods, RunQueryDsl, SelectableHelper,
+    Connection, ExpressionMethods, RunQueryDsl, SelectableHelper,
 };
 
 use crate::{
-    database::connection::DbPool,
+    database::connection::{interact, DbPool},
     personal_information::{
         dto::PersonalInformationDto,
         model::{
@@ -28,30 +28,51 @@ impl PersonalInformationRepository {
 }
 
 impl PersonalInformationRepository {
-    pub fn get_all(&mut self) -> anyhow::Result<Vec<PersonalInformation>> {
+    pub async fn get(&mut self) -> anyhow::Result<PersonalInformation> {
         use crate::schema::personal_informations;
-        let mut conn = self
-            .pool
-            .get()
-            .context("Couldn't acquire connection from pool")?;
-        personal_informations::table
-            .select(PersonalInformation::as_select())
-            .get_results(&mut conn)
-            .context("Can't get publication items from db")
+        interact(&self.pool, |conn| {
+            personal_informations::table
+                .select(PersonalInformation::as_select())
+                .get_result(conn)
+                .map_err(Into::into)
+        })
+        .await
     }
-    pub fn get_by_id(&mut self, id: i32) -> anyhow::Result<PersonalInformation> {
+
+    pub async fn get_full(&mut self) -> anyhow::Result<(PersonalInformation, ContactInformation)> {
         use crate::schema::personal_informations;
-        let mut conn = self
-            .pool
-            .get()
-            .context("Couldn't acquire connection from pool")?;
-        personal_informations::table
-            .filter(personal_informations::id.eq(id))
-            .select(PersonalInformation::as_select())
-            .get_result(&mut conn)
-            .context("Can't get publication item from db")
+        use diesel::BelongingToDsl;
+        use leptos::prelude::*;
+        interact(&self.pool, |conn| {
+            conn.transaction(|c| {
+                let personal_information = personal_informations::table
+                    .select(PersonalInformation::as_select())
+                    .get_result(c)
+                    .context("Can't fetch personal infomration from db")?;
+                println!("1 query");
+                println!("1 query, result: {:?}", personal_information);
+                let contact_information = ContactInformation::belonging_to(&personal_information)
+                    .get_result::<ContactInformation>(c)
+                    .context("Can't get contact information from db")?;
+                println!("2 queries");
+
+                Ok((personal_information, contact_information))
+            })
+        })
+        .await
     }
-    pub fn create_article(
+    pub async fn get_by_id(&mut self, id: i32) -> anyhow::Result<PersonalInformation> {
+        use crate::schema::personal_informations;
+        interact(&self.pool, move |conn| {
+            personal_informations::table
+                .filter(personal_informations::id.eq(id))
+                .select(PersonalInformation::as_select())
+                .get_result(conn)
+                .context("Can't get publication item from db")
+        })
+        .await
+    }
+    pub async fn create_article(
         &mut self,
         personal_information_row: PersonalInformationRow,
         contact_information_row: ContactInformationRow,
@@ -61,22 +82,40 @@ impl PersonalInformationRepository {
         use contact_informations::dsl::*;
         use personal_informations::dsl::*;
 
-        let mut conn = self
-            .pool
-            .get()
-            .context("Couldn't acquire connection from pool")?;
-        let personal_information = insert_into(personal_informations)
-            .values(personal_information_row)
-            .returning(PersonalInformation::as_returning())
-            .on_conflict_do_nothing()
-            .get_result(&mut conn)?;
-        let contact_information = ContactInformationRow {
-            personal_information_id: personal_information.id,
-            ..contact_information_row
-        };
-        insert_into(contact_informations)
-            .values(contact_informations)
-            .execute(&mut conn)?;
+        println!(
+            "Create article receives arguments:\n{:?}\n{:?}",
+            personal_information_row, contact_information_row
+        );
+        let outi = interact(&self.pool, |conn| {
+            let res = conn.transaction(|c| {
+                let personal_information = insert_into(personal_informations)
+                    .values(personal_information_row.clone())
+                    .returning(PersonalInformation::as_returning())
+                    .on_conflict(personal_informations::id)
+                    .do_update()
+                    .set(personal_information_row)
+                    .get_result(c)
+                    .context("Can't create personal information")?;
+
+                let contact_information = ContactInformationRow {
+                    personal_information_id: personal_information.id,
+                    ..contact_information_row
+                };
+                let final_result = insert_into(contact_informations)
+                    .values(contact_information.clone())
+                    .returning(ContactInformation::as_returning())
+                    .get_result(c)
+                    .with_context(|| {
+                        format!(
+                            "Can't create contact information for: {:?}",
+                            contact_information
+                        )
+                    })?;
+                Ok(final_result)
+            });
+            Ok(res)
+        })
+        .await??;
         Ok(())
     }
 }
