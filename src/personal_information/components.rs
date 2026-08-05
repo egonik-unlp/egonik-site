@@ -1,4 +1,4 @@
-use leptos::{html::em, prelude::*};
+use leptos::prelude::*;
 
 use crate::personal_information::dto::{ContactInformationDto, PersonalInformationDto};
 
@@ -9,11 +9,12 @@ pub fn WhoAmI(personal_information: PersonalInformationDto) -> impl IntoView {
         name,
         surname,
         image_url,
+        birth_date,
     } = personal_information;
     view! {
         <div>
                 <p>{ format!("{} {}", name, surname)}</p>
-                <p>{ format!("{}",  id)}</p>
+                <p>{ format!("{} {}",  id, birth_date)}</p>
                 <img src = image_url> </img>
         </div>
     }
@@ -29,6 +30,7 @@ pub fn WhoAmIContact(
         name,
         surname,
         image_url,
+        birth_date,
     } = personal_information;
     let ContactInformationDto {
         github,
@@ -40,7 +42,7 @@ pub fn WhoAmIContact(
         <div>
         <div>
                 <p>{ format!("{} {}", name, surname)}</p>
-                <p>{ format!("{}",  id)}</p>
+                <p>{ format!("{} {}",  id, birth_date)}</p>
                 <img src = image_url> </img>
         </div>
 

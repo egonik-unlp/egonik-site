@@ -29,6 +29,7 @@ impl Into<PersonalInformationDto> for PersonalInformation {
             name,
             surname,
             image_url,
+            birth_date: birth_date.to_string(),
         }
     }
 }

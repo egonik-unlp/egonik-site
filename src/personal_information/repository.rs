@@ -49,12 +49,9 @@ impl PersonalInformationRepository {
                     .select(PersonalInformation::as_select())
                     .get_result(c)
                     .context("Can't fetch personal infomration from db")?;
-                println!("1 query");
-                println!("1 query, result: {:?}", personal_information);
                 let contact_information = ContactInformation::belonging_to(&personal_information)
                     .get_result::<ContactInformation>(c)
                     .context("Can't get contact information from db")?;
-                println!("2 queries");
 
                 Ok((personal_information, contact_information))
             })
@@ -81,11 +78,6 @@ impl PersonalInformationRepository {
         use crate::schema::personal_informations;
         use contact_informations::dsl::*;
         use personal_informations::dsl::*;
-
-        println!(
-            "Create article receives arguments:\n{:?}\n{:?}",
-            personal_information_row, contact_information_row
-        );
         let outi = interact(&self.pool, |conn| {
             let res = conn.transaction(|c| {
                 let personal_information = insert_into(personal_informations)

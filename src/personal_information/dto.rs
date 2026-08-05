@@ -6,6 +6,7 @@ pub struct PersonalInformationDto {
     pub name: String,
     pub surname: String,
     pub image_url: String,
+    pub birth_date: String,
     // pub birth_date:DefaultHeaders ,
 }
 
