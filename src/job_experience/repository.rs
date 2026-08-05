@@ -1,7 +1,5 @@
 use crate::job_experience::dto::JobExperienceItemDto;
-use crate::{
-    core::Repository, database::connection::DbPool, job_experience::model::JobExperienceItem,
-};
+use crate::{database::connection::DbPool, job_experience::model::JobExperienceItem};
 use anyhow::Context;
 use diesel::{
     query_dsl::methods::{FilterDsl, SelectDsl},
@@ -19,8 +17,8 @@ impl JobExperienceItemRepository {
     }
 }
 
-impl Repository<JobExperienceItem, JobExperienceItemDto> for JobExperienceItemRepository {
-    fn get_all(&mut self) -> anyhow::Result<Vec<JobExperienceItem>> {
+impl JobExperienceItemRepository {
+    pub fn get_all(&mut self) -> anyhow::Result<Vec<JobExperienceItem>> {
         use crate::schema::job_experiences;
         let mut conn = self
             .pool
@@ -31,7 +29,7 @@ impl Repository<JobExperienceItem, JobExperienceItemDto> for JobExperienceItemRe
             .get_results(&mut conn)
             .context("Can't get publication items from db")
     }
-    fn get_by_id(&mut self, id: i32) -> anyhow::Result<JobExperienceItem> {
+    pub fn get_by_id(&mut self, id: i32) -> anyhow::Result<JobExperienceItem> {
         use crate::schema::job_experiences;
         let mut conn = self
             .pool
@@ -43,7 +41,7 @@ impl Repository<JobExperienceItem, JobExperienceItemDto> for JobExperienceItemRe
             .get_result(&mut conn)
             .context("Can't get publication item from db")
     }
-    fn create_article(&mut self, article: JobExperienceItemDto) -> anyhow::Result<()> {
+    pub fn create_article(&mut self, article: JobExperienceItemDto) -> anyhow::Result<()> {
         todo!()
     }
 }

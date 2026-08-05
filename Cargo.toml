@@ -22,6 +22,7 @@ diesel = { version = "2.3.11", features = [
 ], optional = true }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = { version = "1.0.151", optional = true }
+toml = { version = "0.9.8", optional = true }
 wasm-bindgen = "0.2.106"
 chrono = { version = "0.4.45", features = ["serde"] }
 dotenvy = "0.15.7"
@@ -36,6 +37,7 @@ ssr = [
   "dep:diesel",
   "dep:reqwest",
   "dep:tokio",
+  "dep:toml",
   "dep:serde_json",
   "leptos/ssr",
   "leptos_meta/ssr",

@@ -1,5 +1,4 @@
 #![allow(clippy::from_over_into)]
-use crate::core::Repository;
 use crate::publications::model::PublicationItem;
 use crate::publications::{dto::PublicationItemDto, repository::PublicationsRepository};
 use serde::{Deserialize, Serialize};

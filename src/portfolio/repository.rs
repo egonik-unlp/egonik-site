@@ -5,7 +5,6 @@ use diesel::{
 };
 
 use crate::{
-    core::Repository,
     database::connection::DbPool,
     portfolio::{dto::PortfolioItemDto, model::PortfolioItem},
 };
@@ -21,8 +20,8 @@ impl PortfolioItemsRepository {
     }
 }
 
-impl Repository<PortfolioItem, PortfolioItemDto> for PortfolioItemsRepository {
-    fn get_all(&mut self) -> anyhow::Result<Vec<PortfolioItem>> {
+impl PortfolioItemsRepository {
+    pub fn get_all(&mut self) -> anyhow::Result<Vec<PortfolioItem>> {
         use crate::schema::portfolio_items;
         let mut conn = self
             .pool
@@ -33,7 +32,7 @@ impl Repository<PortfolioItem, PortfolioItemDto> for PortfolioItemsRepository {
             .get_results(&mut conn)
             .context("Can't get publication items from db")
     }
-    fn get_by_id(&mut self, id: i32) -> anyhow::Result<PortfolioItem> {
+    pub fn get_by_id(&mut self, id: i32) -> anyhow::Result<PortfolioItem> {
         use crate::schema::portfolio_items;
         let mut conn = self
             .pool
@@ -45,7 +44,7 @@ impl Repository<PortfolioItem, PortfolioItemDto> for PortfolioItemsRepository {
             .get_result(&mut conn)
             .context("Can't get publication item from db")
     }
-    fn create_article(&mut self, article: PortfolioItemDto) -> anyhow::Result<()> {
+    pub fn create_article(&mut self, article: PortfolioItemDto) -> anyhow::Result<()> {
         todo!()
     }
 }
