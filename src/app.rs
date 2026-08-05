@@ -1,5 +1,6 @@
 use crate::personal_information::components::{WhoAmI, WhoAmIContact};
 use crate::personal_information::server::get_full_personal_info;
+use crate::portfolio::components::GithubRepoLoader;
 use crate::publications::components::ServerButton;
 use leptos::prelude::*;
 use leptos_meta::{provide_meta_context, Stylesheet, Title};
@@ -19,7 +20,7 @@ pub fn App() -> impl IntoView {
         <Stylesheet id="leptos" href="/pkg/egonik-site.css"/>
 
         // sets the document title
-        <Title text="Welcome to Leptos"/>
+        <Title text="Holaaa"/>
 
         // content for this welcome page
         <Router>
@@ -46,6 +47,7 @@ fn HomePage() -> impl IntoView {
     view! {
             <h1>"Welcome to Leptos!"</h1>
             <button on:click=on_click>"Click Me: " {count}</button>
+        <ServerButton/>
           <ErrorBoundary
             fallback=move |errors| {
             view! {
@@ -58,14 +60,15 @@ fn HomePage() -> impl IntoView {
             <Suspense
             fallback=move || view! { <p>"Loading..."</p> }
             >
-    {move || personal.and_then(|(personal_information, contact_information)| view! {
+    {
+            move || personal.and_then(|(personal_information, contact_information)| view! {
                 <WhoAmIContact personal_information = personal_information.clone() contact_information = contact_information.clone()/>
         }  ) }
             </Suspense>
 
         </ErrorBoundary>
-        <ServerButton/>
-        }
+        <GithubRepoLoader/>
+    }
 }
 
 /// 404 - Not Found

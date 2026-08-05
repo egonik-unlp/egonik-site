@@ -4,7 +4,7 @@ use crate::{
     personal_information::{
         repository::PersonalInformationRepository, service::PersonalInformationService,
     },
-    portfolio::repository::PortfolioItemsRepository,
+    portfolio::{repository::PortfolioItemsRepository, service::PortfolioService},
     publications::{repository::PublicationsRepository, service::PublicationsService},
 };
 
@@ -12,7 +12,7 @@ use crate::{
 pub struct AppState {
     pub job_experience_repository: JobExperienceItemRepository,
     pub personal_information_service: PersonalInformationService,
-    pub portfolio_items_repository: PortfolioItemsRepository,
+    pub portfolio_service: PortfolioService,
     pub publications_service: PublicationsService,
 }
 
@@ -21,13 +21,13 @@ impl AppState {
         let personal_information_service =
             PersonalInformationService::new(PersonalInformationRepository::new(pool.clone()));
         let job_experience_repository = JobExperienceItemRepository::new(pool.clone());
-        let portfolio_items_repository = PortfolioItemsRepository::new(pool.clone());
+        let portfolio_service = PortfolioService::new(PortfolioItemsRepository::new(pool.clone()));
         let publications_service = PublicationsService::new(PublicationsRepository::new(pool));
 
         Self {
             personal_information_service,
             job_experience_repository,
-            portfolio_items_repository,
+            portfolio_service,
             publications_service,
         }
     }

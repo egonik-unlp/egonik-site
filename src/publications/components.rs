@@ -1,10 +1,13 @@
 use crate::publications::server::get_all_publications;
+use futures_timer::Delay;
 use leptos::prelude::*;
 use leptos::{component, view, IntoView};
-
 #[component]
 pub fn ServerButton() -> impl IntoView {
-    let request = Action::new(|_: &()| async move { get_all_publications().await });
+    let request = Action::new(|_: &()| async move {
+        Delay::new(std::time::Duration::new(1, 0));
+        get_all_publications().await
+    });
 
     let pending = request.pending();
     let response = request.value();
