@@ -52,7 +52,9 @@ fn work_row(p: Project, i: usize) -> impl IntoView {
             view! {
                 <a class="work-link" href=l.url target="_blank" rel="noopener noreferrer">
                     {l.label}
-                    <span class="arr" aria-hidden="true">" ↗"</span>
+                    <span class="arr" aria-hidden="true">
+                        " ↗"
+                    </span>
                 </a>
             }
         })
@@ -74,7 +76,9 @@ fn work_row(p: Project, i: usize) -> impl IntoView {
             <div class="work-body">
                 <p class="work-tagline">{p.tagline}</p>
                 <p class="work-desc">{p.description}</p>
-                <ul class="tech" aria-label="Tech stack">{tech}</ul>
+                <ul class="tech" aria-label="Tech stack">
+                    {tech}
+                </ul>
             </div>
         </article>
     }

@@ -39,18 +39,21 @@ async fn main() -> std::io::Result<()> {
                         <!DOCTYPE html>
                         <html lang="en">
                             <head>
-                                <meta charset="utf-8"/>
-                                <meta name="viewport" content="width=device-width, initial-scale=1"/>
-                <meta
-                    name="description"
-                    content="Eduardo Gonik — Data & AI Engineer. Embedding pipelines, vector search, prediction frameworks and the full-stack apps that serve them."
-                />
+                                <meta charset="utf-8" />
+                                <meta
+                                    name="viewport"
+                                    content="width=device-width, initial-scale=1"
+                                />
+                                <meta
+                                    name="description"
+                                    content="Eduardo Gonik — Data & AI Engineer. Embedding pipelines, vector search, prediction frameworks and the full-stack apps that serve them."
+                                />
                                 <AutoReload options=leptos_options.clone() />
-                                <HydrationScripts options=leptos_options.clone()/>
-                                <MetaTags/>
+                                <HydrationScripts options=leptos_options.clone() />
+                                <MetaTags />
                             </head>
                             <body>
-                                <App/>
+                                <App />
                             </body>
                         </html>
                     }

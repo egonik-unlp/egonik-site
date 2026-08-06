@@ -102,8 +102,14 @@ pub fn Research() -> impl IntoView {
                         .repo
                         .map(|url| {
                             view! {
-                                <a class="inline-link" href=url target="_blank" rel="noopener noreferrer">
-                                    "Code" <span aria-hidden="true">" ↗"</span>
+                                <a
+                                    class="inline-link"
+                                    href=url
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                >
+                                    "Code"
+                                    <span aria-hidden="true">" ↗"</span>
                                 </a>
                             }
                         })}
@@ -116,7 +122,9 @@ pub fn Research() -> impl IntoView {
         <section id="research" class="section">
             <div class="container narrow">
                 <div class="section-head" data-reveal="">
-                    <h2 class="section-title">"Research & " <span class="lit">"scientific computing"</span></h2>
+                    <h2 class="section-title">
+                        "Research & " <span class="lit">"scientific computing"</span>
+                    </h2>
                     <p class="section-lede">
                         "Before — and alongside — the engineering, I'm a Physical-Chemistry PhD \
                          researcher at INIFTA and INTECH in La Plata, working on the photophysics of \
@@ -128,8 +136,14 @@ pub fn Research() -> impl IntoView {
                 <div data-reveal="">
                     <p class="sub-label">"Selected publications"</p>
                     <ul class="pub-list">{pubs}</ul>
-                    <a class="inline-link" href=SCHOLAR_URL target="_blank" rel="noopener noreferrer">
-                        "Full list on Google Scholar" <span aria-hidden="true">" ↗"</span>
+                    <a
+                        class="inline-link"
+                        href=SCHOLAR_URL
+                        target="_blank"
+                        rel="noopener noreferrer"
+                    >
+                        "Full list on Google Scholar"
+                        <span aria-hidden="true">" ↗"</span>
                     </a>
                 </div>
 

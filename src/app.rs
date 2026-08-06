@@ -19,18 +19,18 @@ pub fn App() -> impl IntoView {
     view! {
         // injects a stylesheet into the document <head>
         // id=leptos means cargo-leptos will hot-reload this stylesheet
-        <Stylesheet id="leptos" href="/pkg/egonik-site.css"/>
+        <Stylesheet id="leptos" href="/pkg/egonik-site.css" />
 
         // sets the document title
-        <Title text="Holaaa"/>
+        <Title text="Holaaa" />
 
         // content for this welcome page
         <Router>
             <main class="">
-            // <main class="mx-auto max-w-3xl space-y-8 px-6 py-12">
+                // <main class="mx-auto max-w-3xl space-y-8 px-6 py-12">
                 <Routes fallback=move || "Not found.">
-                    <Route path=StaticSegment("") view=HomePage/>
-                    <Route path=WildcardSegment("any") view=NotFound/>
+                    <Route path=StaticSegment("") view=HomePage />
+                    <Route path=WildcardSegment("any") view=NotFound />
                 </Routes>
             </main>
         </Router>
@@ -48,34 +48,42 @@ fn HomePage() -> impl IntoView {
         |_| async move { get_full_personal_info().await },
     );
     view! {
-                <h1 class="text-3xl font-semibold tracking-tight">"Welcome to Leptos!"</h1>
-                <button class="btn btn-solid" on:click=on_click>"Click Me: " {count}</button>
+        <h1 class="text-3xl font-semibold tracking-tight">"Welcome to Leptos!"</h1>
+        <button class="btn btn-solid" on:click=on_click>
+            "Click Me: "
+            {count}
+        </button>
 
-    <Hero/>
+        <Hero />
 
-            <ServerButton/>
-              <ErrorBoundary
-                fallback=move |errors| {
-                view! {
-                    <p class="notice notice-error">
-                {format!("Errors produced during loading: {:?}", errors.get())}
-                    </p>
-                }
+        <ServerButton />
+        <ErrorBoundary fallback=move |errors| {
+            view! {
+                <p class="notice notice-error">
+                    {format!("Errors produced during loading: {:?}", errors.get())}
+                </p>
             }
-            >
-                <Suspense
-                fallback=move || view! { <p class="muted">"Loading..."</p> }
-                >
-        {
-                move || personal.and_then(|(personal_information, contact_information)| view! {
-                    <WhoAmIContact personal_information = personal_information.clone() contact_information = contact_information.clone()/>
-            }  ) }
-                </Suspense>
+        }>
+            <Suspense fallback=move || {
+                view! { <p class="muted">"Loading..."</p> }
+            }>
+                {move || {
+                    personal
+                        .and_then(|(personal_information, contact_information)| {
+                            view! {
+                                <WhoAmIContact
+                                    personal_information=personal_information.clone()
+                                    contact_information=contact_information.clone()
+                                />
 
-            </ErrorBoundary>
-            <GithubRepoLoader/>
-            <Contact/>
-        }
+                            }
+                        })
+                }}
+            </Suspense>
+        </ErrorBoundary>
+        <GithubRepoLoader count />
+        <Contact />
+    }
 }
 
 /// 404 - Not Found
@@ -95,7 +103,5 @@ fn NotFound() -> impl IntoView {
         resp.set_status(actix_web::http::StatusCode::NOT_FOUND);
     }
 
-    view! {
-        <h1 class="text-3xl font-semibold tracking-tight">"Not Found"</h1>
-    }
+    view! { <h1 class="text-3xl font-semibold tracking-tight">"Not Found"</h1> }
 }

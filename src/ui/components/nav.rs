@@ -6,7 +6,9 @@ pub fn Nav() -> impl IntoView {
         <header class="site-nav">
             <div class="container nav-inner">
                 <a class="brand" href="#top">
-                    <span class="brand-mark" aria-hidden="true">"◎"</span>
+                    <span class="brand-mark" aria-hidden="true">
+                        "◎"
+                    </span>
                     <span class="brand-name">"eduardo gonik"</span>
                 </a>
                 <nav class="nav-links" aria-label="Primary">
