@@ -2,6 +2,7 @@
 
 pub mod app;
 
+pub mod animator;
 pub mod core;
 pub mod database;
 pub mod entrypoint;

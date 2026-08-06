@@ -20,7 +20,7 @@ pub fn GithubRepoLoader() -> impl IntoView {
          fallback=move|errors| format!("Error while loading gh: {:?}",errors.get()  )
         >
         <Suspense
-        fallback=move || view! {<p> "Loading o "  </p>}
+        fallback=move || view! {<p class="muted"> "Loading o "  </p>}
         >
          {
             move || resource.and_then(move |comp| {
@@ -38,7 +38,8 @@ pub fn GithubRepoLoader() -> impl IntoView {
 #[component]
 fn GithubRepoComponent(portfolio_items: Vec<PortfolioItemDto>) -> impl IntoView {
     view! {
-        <table>
+        <div class="table-wrap">
+        <table class="data-table">
         <tr>
         <th> title </th>
         <th> description </th>
@@ -50,6 +51,7 @@ fn GithubRepoComponent(portfolio_items: Vec<PortfolioItemDto>) -> impl IntoView 
             portfolio_items.into_iter().map(|portfolio_item| view! { <PortfolioSingleComponentRow portfolio_item/> }).collect_view()
         }
         </table>
+        </div>
     }
 }
 
@@ -57,9 +59,9 @@ fn GithubRepoComponent(portfolio_items: Vec<PortfolioItemDto>) -> impl IntoView 
 fn PortfolioSingleComponentRow(portfolio_item: PortfolioItemDto) -> impl IntoView {
     view! {
         <tr>
-        <td>{ portfolio_item.title } </td>
-        <td>{ portfolio_item.description } </td>
-        <td>{ portfolio_item.public } </td>
+        <td class="font-medium whitespace-nowrap">{ portfolio_item.title } </td>
+        <td class="max-w-md">{ portfolio_item.description } </td>
+        <td class="muted">{ portfolio_item.public } </td>
         <td>{ portfolio_item.public_url } </td>
         // TODO: tags
         </tr>

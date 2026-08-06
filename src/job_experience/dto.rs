@@ -1,5 +1,11 @@
+use chrono::NaiveDate;
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct JobExperienceItemDto {
-    job_title: String,
-    accomplishments: String,
-    responsabilities: String,
+    pub date_from: NaiveDate,
+    pub date_to: Option<NaiveDate>,
+    pub job_title: String,
+    pub accomplishments: String,
+    pub responsabilities: String,
 }

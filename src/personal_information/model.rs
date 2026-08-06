@@ -46,17 +46,16 @@ pub struct ContactInformation {
     pub instagram: String,
     pub linked_in: String,
 }
-
-impl Into<ContactInformationDto> for ContactInformation {
-    fn into(self) -> ContactInformationDto {
+impl From<ContactInformation> for ContactInformationDto {
+    fn from(value: ContactInformation) -> Self {
         let ContactInformation {
-            id,
-            personal_information_id,
             github,
             email,
             instagram,
             linked_in,
-        } = self;
+            ..
+        } = value;
+
         ContactInformationDto {
             github,
             email,
@@ -118,24 +117,6 @@ impl ContactInformationRow {
             email,
             instagram,
             linked_in,
-        }
-    }
-}
-
-#[derive(Debug, Deserialize, Serialize)]
-pub struct InformationConfigFile {
-    pub personal_information_row: PersonalInformationRow,
-    pub contact_information_row: ContactInformationRow,
-}
-
-impl InformationConfigFile {
-    pub fn new(
-        personal_information_row: PersonalInformationRow,
-        contact_information_row: ContactInformationRow,
-    ) -> Self {
-        Self {
-            personal_information_row,
-            contact_information_row,
         }
     }
 }

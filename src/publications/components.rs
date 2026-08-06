@@ -13,8 +13,9 @@ pub fn ServerButton() -> impl IntoView {
     let response = request.value();
 
     view! {
-        <div>
+        <div class="space-y-4">
             <button
+                class="btn"
                 on:click=move |_| {
                     request.dispatch(());
                 }
@@ -34,14 +35,15 @@ pub fn ServerButton() -> impl IntoView {
                     match response.get() {
                         None => {
                             view! {
-                                <p>"The server has not been called yet."</p>
+                                <p class="muted">"The server has not been called yet."</p>
                             }
                             .into_any()
                         }
 
                         Some(Ok(publications)) => {
                             view! {
-                                    <table>
+                                    <div class="table-wrap">
+                                    <table class="data-table">
                                     <tr>
                                     <th>"title"</th>
                                     <th>"abs"</th>
@@ -54,23 +56,27 @@ pub fn ServerButton() -> impl IntoView {
                                         .map(|publication| {
                                             view! {
                                     <tr>
-                                                <td>{publication.title}</td>
-                                                <td>{publication.abs}</td>
-                                                <td>{publication.year}</td>
-                                                <td>{publication.journal}</td>
+                                                <td class="max-w-sm font-medium">{publication.title}</td>
+                                                <td class="muted max-w-md">{publication.abs}</td>
+                                                <td class="tabular-nums whitespace-nowrap">{publication.year}</td>
+                                                <td class="muted whitespace-nowrap">{publication.journal}</td>
                                                 <td>{publication.link}</td>
                                     </tr>
                                             }
-                                        })
+
+                                        }
+
+                            )
                                         .collect_view()}
                                     </table>
+                                    </div>
                             }
                             .into_any()
                         }
 
                         Some(Err(error)) => {
                             view! {
-                                <p>{format!("Server error: {error}")}</p>
+                                <p class="notice notice-error">{format!("Server error: {error}")}</p>
                             }
                             .into_any()
                         }

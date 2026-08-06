@@ -12,10 +12,12 @@ pub fn WhoAmI(personal_information: PersonalInformationDto) -> impl IntoView {
         birth_date,
     } = personal_information;
     view! {
-        <div>
-                <p>{ format!("{} {}", name, surname)}</p>
-                <p>{ format!("{} {}",  id, birth_date)}</p>
-                <img src = image_url> </img>
+        <div class="card flex items-center gap-4">
+                <img class="size-20 shrink-0 rounded-full object-cover" alt="" src = image_url />
+                <div class="min-w-0">
+                <p class="text-lg font-medium">{ format!("{} {}", name, surname)}</p>
+                <p class="muted">{ format!("{} {}",  id, birth_date)}</p>
+                </div>
         </div>
     }
 }
@@ -39,17 +41,19 @@ pub fn WhoAmIContact(
         linked_in,
     } = contact_information;
     view! {
-        <div>
-        <div>
-                <p>{ format!("{} {}", name, surname)}</p>
-                <p>{ format!("{} {}",  id, birth_date)}</p>
-                <img src = image_url> </img>
+        <div class="grid gap-4 sm:grid-cols-2">
+        <div class="card flex items-center gap-4">
+                <img class="size-20 shrink-0 rounded-full object-cover" alt="" src = image_url />
+                <div class="min-w-0">
+                <p class="text-lg font-medium">{ format!("{} {}", name, surname)}</p>
+                <p class="muted">{ format!("{} {}",  id, birth_date)}</p>
+                </div>
         </div>
 
-        <div>
-                <p>{ format!("{} {}", github, email)}</p>
-                <p>{ format!("{} {}",  instagram, email)}</p>
-                <p>{ format!(" {} ",  linked_in)}</p>
+        <div class="card space-y-1 text-sm">
+                <p class="break-all">{ format!("{} {}", github, email)}</p>
+                <p class="break-all">{ format!("{} {}",  instagram, email)}</p>
+                <p class="break-all">{ format!(" {} ",  linked_in)}</p>
         </div>
         </div>
     }

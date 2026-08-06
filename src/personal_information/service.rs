@@ -4,13 +4,11 @@ use anyhow::Context;
 use serde::{Deserialize, Serialize};
 
 use crate::{
+    core::config::model::InformationConfigFile,
     database::connection::DbPool,
     personal_information::{
         dto::{ContactInformationDto, PersonalInformationDto},
-        model::{
-            ContactInformationRow, InformationConfigFile, PersonalInformation,
-            PersonalInformationRow,
-        },
+        model::{ContactInformationRow, PersonalInformation, PersonalInformationRow},
         repository::PersonalInformationRepository,
     },
 };

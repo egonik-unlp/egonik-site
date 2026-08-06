@@ -24,7 +24,7 @@ pub fn App() -> impl IntoView {
 
         // content for this welcome page
         <Router>
-            <main>
+            <main class="mx-auto max-w-3xl space-y-8 px-6 py-12">
                 <Routes fallback=move || "Not found.">
                     <Route path=StaticSegment("") view=HomePage/>
                     <Route path=WildcardSegment("any") view=NotFound/>
@@ -45,20 +45,20 @@ fn HomePage() -> impl IntoView {
         |_| async move { get_full_personal_info().await },
     );
     view! {
-            <h1>"Welcome to Leptos!"</h1>
-            <button on:click=on_click>"Click Me: " {count}</button>
+            <h1 class="text-3xl font-semibold tracking-tight">"Welcome to Leptos!"</h1>
+            <button class="btn" on:click=on_click>"Click Me: " {count}</button>
         <ServerButton/>
           <ErrorBoundary
             fallback=move |errors| {
             view! {
-                <p>
+                <p class="notice notice-error">
             {format!("Errors produced during loading: {:?}", errors.get())}
                 </p>
             }
         }
         >
             <Suspense
-            fallback=move || view! { <p>"Loading..."</p> }
+            fallback=move || view! { <p class="muted">"Loading..."</p> }
             >
     {
             move || personal.and_then(|(personal_information, contact_information)| view! {
@@ -89,6 +89,6 @@ fn NotFound() -> impl IntoView {
     }
 
     view! {
-        <h1>"Not Found"</h1>
+        <h1 class="text-3xl font-semibold tracking-tight">"Not Found"</h1>
     }
 }

@@ -1,10 +1,13 @@
 use std::{fs::OpenOptions, io::Write, str::FromStr};
 
+use anyhow::Context;
 use chrono::NaiveDate;
-use egonik_site::personal_information::model::{
-    ContactInformationRow, InformationConfigFile, PersonalInformationRow,
+use egonik_site::{
+    core::config::model::InformationConfigFile,
+    personal_information::model::{ContactInformationRow, PersonalInformationRow},
 };
-fn main() {
+
+fn main() -> anyhow::Result<()> {
     let contact_information = ContactInformationRow::new(
         1,
         "egonik-unlp".to_string(),
@@ -27,5 +30,8 @@ fn main() {
         .write(true)
         .open("example-config.toml")
         .unwrap();
-    outfile.write_all(body.as_bytes()).unwrap();
+    outfile
+        .write_all(body.as_bytes())
+        .context("Can't write outfile")?;
+    Ok(())
 }

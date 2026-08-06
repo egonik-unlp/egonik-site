@@ -63,8 +63,14 @@ site-root = "target/site"
 # The site-root relative folder where all compiled output (JS, WASM and CSS) is written
 # Defaults to pkg
 site-pkg-dir = "pkg"
-# [Optional] The source CSS file. If it ends with .sass or .scss then it will be compiled by dart-sass into CSS. The CSS is optimized by Lightning CSS before being written to <site-root>/<site-pkg>/app.css
-style-file = "style/main.scss"
+# [Optional] The Tailwind entry point. Setting this activates the Tailwind build:
+# cargo-leptos downloads and runs the standalone Tailwind CLI itself (v4.2.1) -- no node/npm.
+# Deliberately NOT setting `tailwind-config-file`: the v4 CLI has no --config flag, and
+# cargo-leptos would generate a dead v3-style tailwind.config.js that appears to be in use.
+tailwind-input-file = "style/tailwind.css"
+# `style-file` (the old style/main.scss) is intentionally unset. Sass and Tailwind outputs are
+# merely concatenated, and unlayered CSS beats Tailwind's @layer rules -- so main.scss's
+# `text-align: center` would silently override Tailwind utilities.
 # Assets source dir. All files found here will be copied and synchronized to site-root.
 # The assets-dir cannot have a sub directory with the same name/path as site-pkg-dir.
 #
@@ -81,7 +87,7 @@ reload-port = 3001
 end2end-cmd = "npx playwright test"
 end2end-dir = "end2end"
 #  The browserlist query used for optimizing the CSS.
-browserquery = "defaults"
+browserquery = "last 2 versions and not dead"
 # The environment Leptos will run in, usually either "DEV" or "PROD"
 env = "DEV"
 # The features to use when compiling the bin target
