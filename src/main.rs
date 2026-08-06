@@ -29,6 +29,7 @@ async fn main() -> std::io::Result<()> {
             .service(Files::new("/pkg", format!("{site_root}/pkg")))
             // serve other assets from the `assets` directory
             .service(Files::new("/assets", &site_root))
+            .service(Files::new("/fonts", format!("{}/fonts", &site_root)))
             // serve the favicon from /favicon.ico
             .service(favicon)
             .leptos_routes(routes, {
@@ -40,6 +41,10 @@ async fn main() -> std::io::Result<()> {
                             <head>
                                 <meta charset="utf-8"/>
                                 <meta name="viewport" content="width=device-width, initial-scale=1"/>
+                <meta
+                    name="description"
+                    content="Eduardo Gonik — Data & AI Engineer. Embedding pipelines, vector search, prediction frameworks and the full-stack apps that serve them."
+                />
                                 <AutoReload options=leptos_options.clone() />
                                 <HydrationScripts options=leptos_options.clone()/>
                                 <MetaTags/>

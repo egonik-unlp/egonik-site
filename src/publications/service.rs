@@ -1,6 +1,7 @@
 #![allow(clippy::from_over_into)]
 use crate::publications::model::PublicationItem;
 use crate::publications::{dto::PublicationItemDto, repository::PublicationsRepository};
+use anyhow::Context;
 use serde::{Deserialize, Serialize};
 
 const PUBLICATION_LOOKUP_URL: &str = "https://api.openalex.org/works?filter=authorships.author.id:A5070154461&select=id,title,publication_year,doi,type,cited_by_count&sort=publication_date:desc&per-page=200";
@@ -59,7 +60,7 @@ impl PublicationsService {
         Ok(publications_type)
     }
 
-    pub async fn sync_publication_history(mut self) {
+    pub async fn sync_publication_history(mut self) -> anyhow::Result<()> {
         let response = reqwest::get(PUBLICATION_LOOKUP_URL)
             .await
             .unwrap()
@@ -67,11 +68,13 @@ impl PublicationsService {
             .await
             .unwrap();
         let scientist_response: ScientistResponse = serde_json::from_str(&response).unwrap();
-        scientist_response.results.into_iter().for_each(|article| {
+        for article in scientist_response.results {
             let insert_article: PublicationItemDto = article.into();
-            self.repo.create_article(insert_article).unwrap()
-        });
-        let articles_in_db = self.repo.get_all().unwrap();
-        println!("{articles_in_db:#?}")
+            self.repo
+                .create_article(insert_article.clone())
+                .await
+                .with_context(|| format!("Couldn't insert {:?} into db", insert_article))?
+        }
+        Ok(())
     }
 }

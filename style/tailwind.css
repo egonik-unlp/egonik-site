@@ -1,40 +1,145 @@
 @import "tailwindcss";
 
-/* ---------------------------------------------------------------------------
-   Design tokens. These become utilities automatically:
-   --color-ink -> text-ink / bg-ink / border-ink, --font-display -> font-display.
-   Define colours here rather than writing raw hex values inside view! macros.
---------------------------------------------------------------------------- */
-@theme {
-  --color-ink: oklch(0.24 0.015 250);
-  --color-muted: oklch(0.55 0.015 250);
-  --color-line: oklch(0.90 0.008 250);
-  --color-paper: oklch(0.99 0.003 90);
-  --color-surface: oklch(0.97 0.005 90);
-  --color-accent: oklch(0.52 0.14 40);
+/* ═══════════════════════════════════════════════════════════════════════════
+   Eduardo Gonik — "Lensing field"
+   Light bending around mass: a deep-field hero resolves into a precise, light
+   body, closing back into space. One luminous accent = lensed light (gold).
 
-  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
-    "Helvetica Neue", Arial, sans-serif;
+   This file is the single style source. `cargo-leptos` compiles it via
+   `tailwind-input-file` in Cargo.toml; `style-file` (Sass) is deliberately
+   unset, so anything not reachable from here is never built.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* ---------------------------------------------------------------------------
+   Design tokens. Every entry here also becomes a utility, so the palette is
+   usable straight from `view!` macros without touching this file:
+     --color-gold      -> text-gold / bg-gold / border-gold
+     --font-display    -> font-display
+     --ease-lens       -> ease-lens
+     --container-page  -> max-w-page
+     --spacing-gutter  -> px-gutter
+   `@theme static` emits all of them, including ones only referenced by the
+   component rules below (which Tailwind's usage detection would otherwise
+   tree-shake away).
+--------------------------------------------------------------------------- */
+@theme static {
+  /* Light body — cool near-white "lab light", never cream. */
+  --color-paper: oklch(0.983 0.006 265);
+  --color-surface: oklch(0.958 0.008 265);
+  --color-ink: oklch(0.215 0.021 275);
+  --color-ink-soft: oklch(0.435 0.021 273);
+  --color-line: oklch(0.905 0.012 265);
+  --color-line-soft: oklch(0.935 0.010 265);
+
+  /* Deep field — the dark sections (hero, contact, footer). */
+  --color-space: oklch(0.170 0.030 273);
+  --color-space-2: oklch(0.128 0.028 274);
+  --color-on-space: oklch(0.962 0.010 265);
+  --color-on-space-soft: oklch(0.735 0.020 268);
+  --color-space-line: oklch(1 0 0 / 0.12);
+
+  /* Lensed light — the single luminous accent. */
+  --color-gold: oklch(0.815 0.135 79);
+  --color-gold-hot: oklch(0.905 0.085 90);
+  --color-gold-deep: oklch(0.470 0.105 62); /* passes contrast on paper */
+
+  /* Role aliases kept for the pre-existing widgets (.muted, .data-table). */
+  --color-muted: var(--color-ink-soft);
+  --color-accent: var(--color-gold-deep);
+
+  --font-display: "Bricolage Grotesque", "Hanken Grotesk", system-ui, sans-serif;
+  --font-body: "Hanken Grotesk", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "Spline Sans Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  /* `font-sans` stays valid and resolves to the body face. */
+  --font-sans: var(--font-body);
+
+  --container-page: 1120px;
+  --spacing-gutter: clamp(1.25rem, 4vw, 3rem);
+
+  --ease-lens: cubic-bezier(0.22, 1, 0.36, 1); /* ease-out-quart-ish */
+  --ease-expo: cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/* Stacking order is not a Tailwind theme namespace — plain custom properties. */
+:root {
+  --z-nav: 100;
+  --z-overlay: 200;
 }
 
 /* ---------------------------------------------------------------------------
-   Base: page defaults. Replaces the old style/main.scss.
+   Web fonts. NOTE: these files are not in `assets/` yet — drop
+   bricolage.woff2 / hanken.woff2 / spline-mono.woff2 into `assets/fonts/` and
+   they are picked up automatically. Until then every stack falls back to
+   system faces (font-display: swap), so nothing breaks, you just get 404s.
+--------------------------------------------------------------------------- */
+@font-face {
+  font-family: "Bricolage Grotesque";
+  src: url("/fonts/bricolage.woff2") format("woff2");
+  font-weight: 200 800;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Hanken Grotesk";
+  src: url("/fonts/hanken.woff2") format("woff2");
+  font-weight: 300 800;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Spline Sans Mono";
+  src: url("/fonts/spline-mono.woff2") format("woff2");
+  font-weight: 300 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+/* ---------------------------------------------------------------------------
+   Base: page defaults.
 --------------------------------------------------------------------------- */
 @layer base {
+  html {
+    scroll-behavior: smooth;
+    scroll-padding-top: 4.5rem; /* the fixed nav */
+    -webkit-text-size-adjust: 100%;
+  }
+
   body {
     background-color: var(--color-paper);
     color: var(--color-ink);
-    font-family: var(--font-sans);
+    font-family: var(--font-body);
+    font-size: clamp(1rem, 0.96rem + 0.2vw, 1.075rem);
+    line-height: 1.6;
+    font-weight: 400;
     -webkit-font-smoothing: antialiased;
     text-rendering: optimizeLegibility;
   }
 
-  a {
-    color: var(--color-accent);
-    text-underline-offset: 2px;
+  h1,
+  h2,
+  h3,
+  h4 {
+    font-family: var(--font-display);
+    font-weight: 800;
+    line-height: 1.05;
+    letter-spacing: -0.025em;
+    text-wrap: balance;
   }
-  a:hover {
-    text-decoration-line: underline;
+
+  p {
+    text-wrap: pretty;
+  }
+
+  /* Links inherit by default — the chrome (nav, contact rows, work rows)
+     colours them itself. Use `.link` for accent-coloured prose links. */
+  a {
+    color: inherit;
+    text-decoration: none;
+  }
+
+  ::selection {
+    background-color: var(--color-gold);
+    color: var(--color-ink);
   }
 }
 
@@ -45,19 +150,233 @@
    its own th/td.
 --------------------------------------------------------------------------- */
 @layer components {
-  /* buttons ------------------------------------------------------------- */
-  .btn {
-    @apply inline-flex items-center justify-center gap-2 rounded-md px-3.5 py-2
-           text-sm font-medium whitespace-nowrap transition-colors
-           cursor-pointer select-none;
-    background-color: var(--color-ink);
-    color: var(--color-paper);
+  /* ═══ LAYOUT PRIMITIVES ═══════════════════════════════════════════════ */
+  /* `.container` is NOT defined here: Tailwind ships a core `container`
+     utility, and @layer utilities beats @layer components — its per-breakpoint
+     max-widths would silently override ours. It is extended via @utility
+     below the layer block instead. */
+
+  .narrow {
+    max-width: 760px;
   }
-  .btn:hover:not(:disabled) {
-    background-color: var(--color-accent);
+
+  .mono {
+    font-family: var(--font-mono);
+    font-weight: 400;
+    font-feature-settings: "ss01";
+  }
+
+  .link {
+    color: var(--color-accent);
+    text-underline-offset: 2px;
+  }
+  .link:hover {
+    text-decoration-line: underline;
+  }
+
+  /* ═══ REVEAL MOTION ═══════════════════════════════════════════════════
+     Progressive: `[data-reveal]` elements are only hidden once something
+     puts `class="js"` on <html>. An IntersectionObserver then adds
+     `is-visible`. With no JS the content simply renders. */
+  .js [data-reveal] {
+    opacity: 0;
+    transform: translateY(18px);
+    transition:
+      opacity 0.7s var(--ease-lens),
+      transform 0.7s var(--ease-lens);
+  }
+  .js [data-reveal].is-visible {
+    opacity: 1;
+    transform: none;
+  }
+
+  /* ═══ NAV ═════════════════════════════════════════════════════════════ */
+  .site-nav {
+    @apply fixed;
+    inset: 0 0 auto 0;
+    z-index: var(--z-nav);
+    border-bottom: 1px solid transparent;
+    color: var(--color-on-space);
+    transition:
+      background 0.4s var(--ease-lens),
+      border-color 0.4s var(--ease-lens),
+      backdrop-filter 0.4s var(--ease-lens);
+  }
+  /* toggled by scroll JS once the hero is behind you */
+  .site-nav.is-solid {
+    background: color-mix(in oklch, var(--color-paper) 82%, transparent);
+    backdrop-filter: saturate(160%) blur(12px);
+    border-bottom-color: var(--color-line);
+    color: var(--color-ink);
+  }
+
+  .nav-inner {
+    @apply flex items-center justify-between;
+    height: 4.5rem;
+  }
+
+  .brand {
+    @apply inline-flex items-center font-medium;
+    gap: 0.65rem;
+    font-family: var(--font-mono);
+    font-size: 0.9rem;
+    letter-spacing: 0.01em;
+  }
+  .brand-mark {
+    color: var(--color-gold);
+    font-size: 1.05rem;
+    line-height: 1;
+  }
+
+  .nav-links {
+    @apply flex;
+    gap: clamp(1rem, 2.4vw, 2rem);
+    font-family: var(--font-mono);
+    font-size: 0.85rem;
+  }
+  .nav-links a {
+    @apply relative;
+    opacity: 0.82;
+    padding-block: 0.25rem;
+    transition: opacity 0.2s var(--ease-lens);
+  }
+  .nav-links a::after {
+    content: "";
+    @apply absolute left-0 bottom-0 w-full;
+    height: 1px;
+    background-color: var(--color-gold);
+    transform: scaleX(0);
+    transform-origin: left;
+    transition: transform 0.3s var(--ease-lens);
+  }
+  .nav-links a:hover {
+    opacity: 1;
+  }
+  .nav-links a:hover::after {
+    transform: scaleX(1);
+  }
+
+  /* ═══ HERO — the deep field ═══════════════════════════════════════════ */
+  .hero {
+    @apply relative flex items-center overflow-hidden isolate;
+    min-height: 100svh;
+    background: radial-gradient(
+      120% 90% at 68% 42%,
+      var(--color-space) 0%,
+      var(--color-space-2) 70%
+    );
+    color: var(--color-on-space);
+  }
+  /* full-bleed backdrop for the lensing animation */
+  .lens-canvas {
+    @apply absolute inset-0 w-full h-full block;
+    z-index: -1;
+  }
+  .hero-inner {
+    padding-block: 8rem 6rem;
+    max-width: 46rem;
+  }
+  .hero-byline {
+    @apply inline-flex items-center;
+    gap: 0.6rem;
+    margin-bottom: 1.6rem;
+    font-family: var(--font-mono);
+    font-size: 0.9rem;
+    color: var(--color-gold);
+  }
+  .hero-byline::before {
+    content: "";
+    @apply inline-block;
+    width: 1.8rem;
+    height: 1px;
+    background-color: var(--color-gold);
+  }
+  .hero-title {
+    font-size: clamp(2.3rem, 1.2rem + 5vw, 5rem);
+    letter-spacing: -0.03em;
+    line-height: 0.98;
+    overflow-wrap: break-word;
+  }
+  .hero-title .soft {
+    color: var(--color-on-space-soft);
+  }
+  .hero-title .lit {
+    color: var(--color-gold-hot);
+  }
+  .hero-lede {
+    margin-top: 1.8rem;
+    max-width: 40ch;
+    font-size: clamp(1.05rem, 1rem + 0.4vw, 1.25rem);
+    color: var(--color-on-space-soft);
+    line-height: 1.6;
+  }
+  .hero-actions {
+    @apply flex flex-wrap;
+    gap: 0.9rem;
+    margin-top: 2.6rem;
+  }
+  .hero-meta {
+    margin-top: 3rem;
+    font-family: var(--font-mono);
+    font-size: 0.8rem;
+    color: var(--color-on-space-soft);
+    letter-spacing: 0.01em;
+  }
+
+  .hero-scroll {
+    @apply absolute inline-flex flex-col items-center uppercase;
+    left: 50%;
+    bottom: 1.6rem;
+    transform: translateX(-50%);
+    gap: 0.5rem;
+    font-family: var(--font-mono);
+    font-size: 0.72rem;
+    letter-spacing: 0.18em;
+    color: var(--color-on-space-soft);
+    opacity: 0.7;
+  }
+  .hero-scroll::after {
+    content: "";
+    width: 1px;
+    height: 2.2rem;
+    background: linear-gradient(var(--color-gold), transparent);
+    animation: scrollpulse 2.4s var(--ease-lens) infinite;
+  }
+
+  /* ═══ BUTTONS ═════════════════════════════════════════════════════════
+     One base, three skins. The base reads ink-on-paper; dark sections flip
+     it via the context rule below, so `.btn` works on either background. */
+  .btn {
+    --btn-bg: transparent;
+    --btn-fg: var(--color-ink);
+    --btn-bd: var(--color-line);
+    @apply inline-flex items-center justify-center gap-2
+           whitespace-nowrap cursor-pointer select-none;
+    padding: 0.8rem 1.4rem;
+    border-radius: 2px;
+    font-family: var(--font-mono);
+    font-size: 0.88rem;
+    font-weight: 500;
+    background: var(--btn-bg);
+    color: var(--btn-fg);
+    border: 1px solid var(--btn-bd);
+    transition:
+      transform 0.15s var(--ease-lens),
+      background 0.2s var(--ease-lens),
+      border-color 0.2s var(--ease-lens),
+      box-shadow 0.3s var(--ease-lens),
+      color 0.2s var(--ease-lens);
+  }
+  .hero .btn,
+  .contact .btn {
+    --btn-fg: var(--color-on-space);
+    --btn-bd: var(--color-space-line);
+  }
+  .btn:active {
+    transform: translateY(1px);
   }
   .btn:focus-visible {
-    outline: 2px solid var(--color-accent);
+    outline: 2px solid var(--color-gold);
     outline-offset: 2px;
   }
   .btn:disabled {
@@ -65,14 +384,383 @@
     cursor: not-allowed;
   }
 
-  /* surfaces ------------------------------------------------------------ */
+  /* the lensed call to action */
+  .btn-primary,
+  .hero .btn-primary,
+  .contact .btn-primary {
+    --btn-bg: var(--color-gold);
+    --btn-fg: oklch(0.22 0.03 60);
+    --btn-bd: var(--color-gold);
+    box-shadow: 0 0 0 0 color-mix(in oklch, var(--color-gold) 60%, transparent);
+  }
+  .btn-primary:hover:not(:disabled) {
+    box-shadow: 0 6px 30px -6px color-mix(in oklch, var(--color-gold) 70%, transparent);
+    transform: translateY(-2px);
+  }
+
+  .btn-ghost:hover:not(:disabled) {
+    --btn-bd: var(--color-gold);
+    --btn-fg: var(--color-gold);
+  }
+
+  /* solid ink button — the plain form buttons outside the landing chrome */
+  .btn-solid,
+  .hero .btn-solid,
+  .contact .btn-solid {
+    --btn-bg: var(--color-ink);
+    --btn-fg: var(--color-paper);
+    --btn-bd: var(--color-ink);
+  }
+  .btn-solid:hover:not(:disabled) {
+    --btn-bg: var(--color-accent);
+    --btn-bd: var(--color-accent);
+  }
+
+  /* ═══ SECTIONS (light body) ═══════════════════════════════════════════ */
+  .section {
+    padding-block: clamp(4.5rem, 10vh, 8rem);
+  }
+  .section-surface {
+    background-color: var(--color-surface);
+  }
+
+  .section-head {
+    max-width: 52ch;
+    margin-bottom: clamp(2.5rem, 6vw, 4rem);
+  }
+  .section-title {
+    font-size: clamp(1.9rem, 1.2rem + 2.6vw, 3rem);
+    letter-spacing: -0.028em;
+  }
+  .section-title .lit {
+    color: var(--color-gold-deep);
+  }
+  .section-lede {
+    margin-top: 1rem;
+    color: var(--color-ink-soft);
+    font-size: clamp(1.02rem, 1rem + 0.3vw, 1.15rem);
+    max-width: 60ch;
+  }
+
+  .sub-label {
+    @apply flex items-center;
+    gap: 0.7rem;
+    margin: clamp(2.2rem, 5vw, 3rem) 0 1.2rem;
+    font-family: var(--font-mono);
+    font-size: 0.82rem;
+    color: var(--color-ink-soft);
+  }
+  .sub-label::before {
+    content: "◆";
+    color: var(--color-gold);
+    font-size: 0.7rem;
+  }
+
+  /* ═══ SELECTED WORK — editorial index, not a card grid ════════════════ */
+  .work-group {
+    margin-top: clamp(2.4rem, 5vw, 3.4rem);
+  }
+  .group-label {
+    @apply flex items-center;
+    gap: 0.8rem;
+    margin-bottom: 0.5rem;
+    font-family: var(--font-mono);
+    font-size: 0.82rem;
+    color: var(--color-ink-soft);
+  }
+  .group-label::before {
+    content: "◆";
+    color: var(--color-gold);
+    font-size: 0.7rem;
+  }
+  .group-label::after {
+    content: "";
+    @apply flex-1;
+    height: 1px;
+    background-color: var(--color-line);
+  }
+
+  .work-row {
+    @apply grid relative;
+    grid-template-columns: minmax(0, 7fr) minmax(0, 11fr);
+    gap: clamp(0.6rem, 3vw, 3rem);
+    padding: clamp(1.5rem, 3vw, 2.2rem) 0;
+    border-top: 1px solid var(--color-line);
+    transition: background 0.3s var(--ease-lens);
+  }
+  .work-row:last-child {
+    border-bottom: 1px solid var(--color-line);
+  }
+  /* the hover wash bleeds into the gutter, past the container padding */
+  .work-row::before {
+    content: "";
+    @apply absolute top-0 bottom-0 pointer-events-none;
+    left: calc(var(--spacing-gutter) * -1);
+    right: calc(var(--spacing-gutter) * -1);
+    background: color-mix(in oklch, var(--color-gold) 6%, transparent);
+    opacity: 0;
+    z-index: -1;
+    transition: opacity 0.3s var(--ease-lens);
+  }
+  .work-row:hover::before {
+    opacity: 1;
+  }
+  .work-row.is-flagship .work-name {
+    font-size: clamp(1.6rem, 1.2rem + 1.4vw, 2.3rem);
+  }
+
+  .work-head {
+    @apply flex flex-col;
+    gap: 0.7rem;
+  }
+  .work-name {
+    font-family: var(--font-display);
+    font-weight: 700;
+    font-size: clamp(1.35rem, 1.1rem + 1vw, 1.7rem);
+    letter-spacing: -0.02em;
+    line-height: 1.05;
+    transition: color 0.25s var(--ease-lens);
+  }
+  .work-row:hover .work-name {
+    color: var(--color-gold-deep);
+  }
+  .work-tagline {
+    font-weight: 600;
+    font-size: 1.08rem;
+    margin-bottom: 0.5rem;
+  }
+  .work-desc {
+    color: var(--color-ink-soft);
+  }
+
+  .badge {
+    @apply self-start;
+    font-family: var(--font-mono);
+    font-size: 0.66rem;
+    letter-spacing: 0.06em;
+    color: var(--color-ink-soft);
+    border: 1px solid var(--color-line);
+    border-radius: 2px;
+    padding: 0.12rem 0.5rem;
+  }
+
+  .work-link {
+    @apply self-start inline-flex items-center;
+    gap: 0.35rem;
+    font-family: var(--font-mono);
+    font-size: 0.85rem;
+    color: var(--color-gold-deep);
+  }
+  .work-link .arr {
+    transition: transform 0.25s var(--ease-lens);
+  }
+  .work-row:hover .work-link .arr {
+    transform: translate(3px, -3px);
+  }
+
+  /* dotted tech stack list */
+  .tech {
+    @apply flex flex-wrap list-none p-0;
+    gap: 0.4rem 0.5rem;
+    margin: 1rem 0 0;
+  }
+  .tech li {
+    font-family: var(--font-mono);
+    font-size: 0.73rem;
+    color: var(--color-ink-soft);
+    padding: 0.1rem 0;
+  }
+  .tech li::after {
+    content: "·";
+    margin-left: 0.5rem;
+    color: var(--color-line);
+  }
+  .tech li:last-child::after {
+    content: "";
+  }
+
+  /* ═══ SKILLS — instrument legend ══════════════════════════════════════ */
+  .legend {
+    border-top: 1px solid var(--color-line);
+  }
+  .legend-row {
+    @apply grid items-baseline;
+    grid-template-columns: minmax(0, 5fr) minmax(0, 13fr);
+    gap: clamp(0.6rem, 3vw, 3rem);
+    padding: 1.4rem 0;
+    border-bottom: 1px solid var(--color-line);
+  }
+  .legend-name {
+    font-family: var(--font-display);
+    font-weight: 700;
+    font-size: 1.05rem;
+    letter-spacing: -0.01em;
+  }
+  .legend-tags {
+    @apply flex flex-wrap list-none p-0 m-0;
+    gap: 0.45rem 0.7rem;
+  }
+  .legend-tags li {
+    font-family: var(--font-mono);
+    font-size: 0.85rem;
+    color: var(--color-ink);
+  }
+  .legend-tags li::before {
+    content: "› ";
+    color: var(--color-gold);
+  }
+
+  /* ═══ RESEARCH ════════════════════════════════════════════════════════ */
+  .pub-list {
+    @apply grid list-none p-0;
+    gap: 1.2rem;
+    margin: 0 0 1.4rem;
+  }
+  .pub-item {
+    @apply grid items-baseline;
+    grid-template-columns: 3.6rem 1fr;
+    gap: 0 1.1rem;
+    padding-bottom: 1.2rem;
+    border-bottom: 1px solid var(--color-line-soft);
+  }
+  .pub-item:last-child {
+    border-bottom: 0;
+  }
+  .pub-year {
+    font-family: var(--font-mono);
+    font-size: 0.85rem;
+    color: var(--color-gold-deep);
+  }
+  .pub-title {
+    @apply block;
+    font-weight: 600;
+  }
+  .pub-venue {
+    @apply block italic;
+    color: var(--color-ink-soft);
+    font-size: 0.92rem;
+    margin-top: 0.15rem;
+  }
+
+  .tool-list {
+    @apply grid list-none p-0;
+    gap: 1.5rem;
+    margin: 1.2rem 0 0;
+  }
+  .tool-title {
+    font-family: var(--font-display);
+    font-weight: 700;
+    font-size: 1.05rem;
+    margin-bottom: 0.3rem;
+  }
+  .tool-item p {
+    color: var(--color-ink-soft);
+  }
+
+  .inline-link {
+    @apply inline-flex items-center;
+    gap: 0.3rem;
+    margin-top: 0.5rem;
+    font-family: var(--font-mono);
+    font-size: 0.85rem;
+    color: var(--color-gold-deep);
+    border-bottom: 1px solid transparent;
+    transition: border-color 0.2s var(--ease-lens);
+  }
+  .inline-link:hover {
+    border-bottom-color: var(--color-gold);
+  }
+
+  /* ═══ CONTACT — back into the field (dark) ════════════════════════════
+     Must stay after .section-* so `.contact-title .lit` beats
+     `.section-title .lit` (same specificity, source order decides). */
+  .contact {
+    @apply relative overflow-hidden isolate;
+    background: radial-gradient(
+      120% 120% at 30% 0%,
+      var(--color-space) 0%,
+      var(--color-space-2) 80%
+    );
+    color: var(--color-on-space);
+  }
+  .contact .section-lede {
+    color: var(--color-on-space-soft);
+  }
+  .contact-title {
+    font-size: clamp(2.4rem, 1.5rem + 4vw, 4.5rem);
+    letter-spacing: -0.03em;
+  }
+  .contact-title .lit {
+    color: var(--color-gold-hot);
+  }
+
+  .contact-links {
+    @apply grid list-none p-0;
+    gap: 0;
+    margin: clamp(2.5rem, 6vw, 4rem) 0 0;
+    max-width: 720px;
+  }
+  .contact-links li {
+    border-top: 1px solid var(--color-space-line);
+  }
+  .contact-links li:last-child {
+    border-bottom: 1px solid var(--color-space-line);
+  }
+  .contact-links a {
+    @apply grid items-center;
+    grid-template-columns: 8rem 1fr auto;
+    gap: 1rem;
+    padding: 1.4rem 0.4rem;
+    transition:
+      padding 0.3s var(--ease-lens),
+      color 0.3s var(--ease-lens);
+  }
+  /* the row slides right as it lights up */
+  .contact-links a:hover {
+    padding-inline: 1.2rem 0.4rem;
+    color: var(--color-gold);
+  }
+  .contact-key {
+    font-family: var(--font-mono);
+    font-size: 0.8rem;
+    color: var(--color-on-space-soft);
+  }
+  .contact-val {
+    @apply min-w-0;
+    font-family: var(--font-display);
+    font-weight: 700;
+    font-size: clamp(1.05rem, 0.9rem + 0.9vw, 1.45rem);
+    overflow-wrap: anywhere;
+  }
+  .contact-arr {
+    color: var(--color-gold);
+    transition: transform 0.25s var(--ease-lens);
+  }
+  .contact-links a:hover .contact-arr {
+    transform: translate(4px, -4px);
+  }
+
+  /* ═══ FOOTER ══════════════════════════════════════════════════════════ */
+  .site-footer {
+    background-color: var(--color-space-2);
+    color: var(--color-on-space-soft);
+    padding-block: 2.5rem;
+    border-top: 1px solid var(--color-space-line);
+  }
+  .footer-inner {
+    @apply flex justify-between flex-wrap;
+    gap: 0.5rem;
+    font-family: var(--font-mono);
+    font-size: 0.8rem;
+  }
+
+  /* ═══ SURFACES & DATA WIDGETS ═════════════════════════════════════════ */
   .card {
     @apply rounded-lg p-5;
     background-color: var(--color-surface);
     border: 1px solid var(--color-line);
   }
 
-  /* tables -------------------------------------------------------------- */
   .data-table {
     @apply w-full text-sm;
     border-collapse: collapse;
@@ -94,12 +782,11 @@
     @apply break-all;
   }
 
-  /* a table that scrolls instead of overflowing the page ---------------- */
+  /* a table that scrolls instead of overflowing the page */
   .table-wrap {
     @apply w-full overflow-x-auto;
   }
 
-  /* text ---------------------------------------------------------------- */
   .muted {
     @apply text-sm;
     color: var(--color-muted);
@@ -113,5 +800,72 @@
     color: oklch(0.45 0.16 25);
     background-color: oklch(0.96 0.02 25);
     border-color: oklch(0.86 0.06 25);
+  }
+
+  /* ═══ RESPONSIVE ══════════════════════════════════════════════════════ */
+  @media (max-width: 720px) {
+    .brand-name {
+      display: none;
+    }
+    .work-row {
+      grid-template-columns: 1fr;
+      gap: 1rem;
+    }
+    .legend-row {
+      grid-template-columns: 1fr;
+      gap: 0.6rem;
+    }
+    .contact-links a {
+      grid-template-columns: 6rem 1fr auto;
+    }
+    .hero-inner {
+      padding-block: 7rem 5rem;
+    }
+  }
+}
+
+/* ---------------------------------------------------------------------------
+   The page shell. Extends Tailwind's core `container` utility so it lands in
+   @layer utilities alongside it — and after it, which is what makes the fixed
+   1120px max-width beat the core utility's breakpoint ladder.
+--------------------------------------------------------------------------- */
+@utility container {
+  width: 100%;
+  margin-inline: auto;
+  max-width: var(--container-page);
+  padding-inline: var(--spacing-gutter);
+}
+
+@keyframes scrollpulse {
+  0%,
+  100% {
+    opacity: 0.3;
+    transform: scaleY(0.6);
+    transform-origin: top;
+  }
+  50% {
+    opacity: 1;
+    transform: scaleY(1);
+  }
+}
+
+/* ═══ MOTION PREFERENCES ═══════════════════════════════════════════════════ */
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+  .js [data-reveal] {
+    opacity: 1;
+    transform: none;
+    transition: none;
+  }
+  .hero-scroll::after {
+    animation: none;
+  }
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    transition-duration: 0.001ms !important;
   }
 }

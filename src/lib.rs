@@ -10,6 +10,7 @@ pub mod job_experience;
 pub mod personal_information;
 pub mod portfolio;
 pub mod publications;
+pub mod ui;
 
 #[cfg(feature = "ssr")]
 pub mod schema;

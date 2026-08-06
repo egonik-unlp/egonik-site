@@ -78,8 +78,8 @@ impl PersonalInformationRepository {
         use crate::schema::personal_informations;
         use contact_informations::dsl::*;
         use personal_informations::dsl::*;
-        let outi = interact(&self.pool, |conn| {
-            let res = conn.transaction(|c| {
+        interact(&self.pool, |conn| {
+            conn.transaction(|c| {
                 let personal_information = insert_into(personal_informations)
                     .values(personal_information_row.clone())
                     .returning(PersonalInformation::as_returning())
@@ -93,7 +93,7 @@ impl PersonalInformationRepository {
                     personal_information_id: personal_information.id,
                     ..contact_information_row
                 };
-                let final_result = insert_into(contact_informations)
+                insert_into(contact_informations)
                     .values(contact_information.clone())
                     .returning(ContactInformation::as_returning())
                     .get_result(c)
@@ -102,12 +102,10 @@ impl PersonalInformationRepository {
                             "Can't create contact information for: {:?}",
                             contact_information
                         )
-                    })?;
-                Ok(final_result)
-            });
-            Ok(res)
+                    });
+                Ok(())
+            })
         })
-        .await??;
-        Ok(())
+        .await
     }
 }

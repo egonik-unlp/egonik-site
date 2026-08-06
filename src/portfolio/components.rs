@@ -40,6 +40,7 @@ fn GithubRepoComponent(portfolio_items: Vec<PortfolioItemDto>) -> impl IntoView 
     view! {
         <div class="table-wrap">
         <table class="data-table">
+        <thead>
         <tr>
         <th> title </th>
         <th> description </th>
@@ -47,9 +48,12 @@ fn GithubRepoComponent(portfolio_items: Vec<PortfolioItemDto>) -> impl IntoView 
         <th> public_url </th>
         <th> tags </th>
         </tr>
+        </thead>
+        <tbody>
         {
             portfolio_items.into_iter().map(|portfolio_item| view! { <PortfolioSingleComponentRow portfolio_item/> }).collect_view()
         }
+        </tbody>
         </table>
         </div>
     }
@@ -57,13 +61,18 @@ fn GithubRepoComponent(portfolio_items: Vec<PortfolioItemDto>) -> impl IntoView 
 
 #[component]
 fn PortfolioSingleComponentRow(portfolio_item: PortfolioItemDto) -> impl IntoView {
+    let tags_string = portfolio_item
+        .tags
+        .into_iter()
+        .map(|item| format!("{} ", item.value))
+        .collect::<String>();
     view! {
         <tr>
         <td class="font-medium whitespace-nowrap">{ portfolio_item.title } </td>
         <td class="max-w-md">{ portfolio_item.description } </td>
         <td class="muted">{ portfolio_item.public } </td>
         <td>{ portfolio_item.public_url } </td>
-        // TODO: tags
+        <td>{tags_string} </td>
         </tr>
     }
 }

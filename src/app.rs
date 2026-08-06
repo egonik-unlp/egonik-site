@@ -2,6 +2,8 @@ use crate::personal_information::components::{WhoAmI, WhoAmIContact};
 use crate::personal_information::server::get_full_personal_info;
 use crate::portfolio::components::GithubRepoLoader;
 use crate::publications::components::ServerButton;
+use crate::ui::components::contact::Contact;
+use crate::ui::components::hero::Hero;
 use leptos::prelude::*;
 use leptos_meta::{provide_meta_context, Stylesheet, Title};
 use leptos_router::{
@@ -24,7 +26,8 @@ pub fn App() -> impl IntoView {
 
         // content for this welcome page
         <Router>
-            <main class="mx-auto max-w-3xl space-y-8 px-6 py-12">
+            <main class="">
+            // <main class="mx-auto max-w-3xl space-y-8 px-6 py-12">
                 <Routes fallback=move || "Not found.">
                     <Route path=StaticSegment("") view=HomePage/>
                     <Route path=WildcardSegment("any") view=NotFound/>
@@ -45,30 +48,34 @@ fn HomePage() -> impl IntoView {
         |_| async move { get_full_personal_info().await },
     );
     view! {
-            <h1 class="text-3xl font-semibold tracking-tight">"Welcome to Leptos!"</h1>
-            <button class="btn" on:click=on_click>"Click Me: " {count}</button>
-        <ServerButton/>
-          <ErrorBoundary
-            fallback=move |errors| {
-            view! {
-                <p class="notice notice-error">
-            {format!("Errors produced during loading: {:?}", errors.get())}
-                </p>
-            }
-        }
-        >
-            <Suspense
-            fallback=move || view! { <p class="muted">"Loading..."</p> }
-            >
-    {
-            move || personal.and_then(|(personal_information, contact_information)| view! {
-                <WhoAmIContact personal_information = personal_information.clone() contact_information = contact_information.clone()/>
-        }  ) }
-            </Suspense>
+                <h1 class="text-3xl font-semibold tracking-tight">"Welcome to Leptos!"</h1>
+                <button class="btn btn-solid" on:click=on_click>"Click Me: " {count}</button>
 
-        </ErrorBoundary>
-        <GithubRepoLoader/>
-    }
+    <Hero/>
+
+            <ServerButton/>
+              <ErrorBoundary
+                fallback=move |errors| {
+                view! {
+                    <p class="notice notice-error">
+                {format!("Errors produced during loading: {:?}", errors.get())}
+                    </p>
+                }
+            }
+            >
+                <Suspense
+                fallback=move || view! { <p class="muted">"Loading..."</p> }
+                >
+        {
+                move || personal.and_then(|(personal_information, contact_information)| view! {
+                    <WhoAmIContact personal_information = personal_information.clone() contact_information = contact_information.clone()/>
+            }  ) }
+                </Suspense>
+
+            </ErrorBoundary>
+            <GithubRepoLoader/>
+            <Contact/>
+        }
 }
 
 /// 404 - Not Found

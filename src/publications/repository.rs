@@ -1,17 +1,13 @@
-use anyhow::Context;
-use diesel::{
-    dsl::insert_into,
-    query_dsl::methods::{FilterDsl, SelectDsl},
-    ExpressionMethods, RunQueryDsl, SelectableHelper,
-};
-
 use crate::{
-    database::connection::DbPool,
+    database::connection::{interact, DbPool},
     publications::{
         dto::PublicationItemDto,
         model::{PublicationItem, PublicationItemRow},
     },
 };
+use anyhow::Context;
+use diesel::prelude::*;
+use diesel::{dsl::insert_into, ExpressionMethods, RunQueryDsl, SelectableHelper};
 
 #[derive(Debug, Clone)]
 pub struct PublicationsRepository {
@@ -48,16 +44,20 @@ impl PublicationsRepository {
             .context("Can't get publication item from db")
     }
 
-    pub fn create_article(&mut self, new_article: PublicationItemDto) -> anyhow::Result<()> {
+    pub async fn create_article(&self, new_article: PublicationItemDto) -> anyhow::Result<()> {
         use crate::schema::publication_items;
         use publication_items::dsl::*;
-        let mut conn = self.pool.get().context("Couldn't get conn from pool")?;
-        let value: PublicationItemRow = new_article.into();
-        insert_into(publication_items)
-            .values(&value)
-            .on_conflict_do_nothing()
-            .execute(&mut conn)
-            .context("Error creating article")?;
-        Ok(())
+
+        interact(&self.pool, |conn| {
+            conn.transaction(|c| {
+                insert_into(publication_items)
+                    .values(&PublicationItemRow::from(new_article))
+                    .on_conflict_do_nothing()
+                    .execute(c)
+                    .context("Error creating article")?;
+                Ok(())
+            })
+        })
+        .await
     }
 }

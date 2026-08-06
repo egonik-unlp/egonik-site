@@ -15,7 +15,7 @@ pub fn ServerButton() -> impl IntoView {
     view! {
         <div class="space-y-4">
             <button
-                class="btn"
+                class="btn btn-solid"
                 on:click=move |_| {
                     request.dispatch(());
                 }

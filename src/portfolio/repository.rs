@@ -82,8 +82,8 @@ impl PortfolioItemsRepository {
                     .for_each(|mut row| row.portfolio_item_id = Some(portfolio_item.id));
                 insert_into(tags::table)
                     .values(&tagf)
-                    .load::<Tag>(c)
-                    .context("Couldn't load into db t")?;
+                    .execute(c)
+                    .context("Couldn't load into db t");
                 Ok(())
             })
         })
