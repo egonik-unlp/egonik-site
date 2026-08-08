@@ -1,11 +1,15 @@
 use crate::personal_information::components::{WhoAmI, WhoAmIContact};
 use crate::personal_information::server::get_full_personal_info;
 use crate::portfolio::components::GithubRepoLoader;
+use crate::publications::components::PublicationsWithMetadata;
 use crate::publications::components::ServerButton;
 use crate::ui::components::contact::Contact;
 use crate::ui::components::hero::Hero;
+use crate::ui::components::nav::Nav;
+use crate::ui::components::projects::Projects;
 use leptos::prelude::*;
 use leptos_meta::{provide_meta_context, Stylesheet, Title};
+use leptos_router::path;
 use leptos_router::{
     components::{Route, Router, Routes},
     StaticSegment, WildcardSegment,
@@ -26,10 +30,13 @@ pub fn App() -> impl IntoView {
 
         // content for this welcome page
         <Router>
+        <Nav/>
             <main class="">
                 // <main class="mx-auto max-w-3xl space-y-8 px-6 py-12">
                 <Routes fallback=move || "Not found.">
                     <Route path=StaticSegment("") view=HomePage />
+
+                    <Route path=path!("/projects") view=Projects  />
                     <Route path=WildcardSegment("any") view=NotFound />
                 </Routes>
             </main>
@@ -81,7 +88,9 @@ fn HomePage() -> impl IntoView {
                 }}
             </Suspense>
         </ErrorBoundary>
+        <Projects/>
         <GithubRepoLoader count />
+        <PublicationsWithMetadata/>
         <Contact />
     }
 }

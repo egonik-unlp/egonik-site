@@ -5,6 +5,7 @@ pub enum Category {
     AiMl,
     Systems,
     Visual,
+    Scientific,
 }
 
 impl Category {
@@ -13,6 +14,7 @@ impl Category {
             Category::AiMl => "ai & machine learning",
             Category::Systems => "systems & backend",
             Category::Visual => "visual & creative",
+            Category::Scientific => "scientific computing",
         }
     }
 

@@ -1,7 +1,6 @@
+use crate::publications::dto::PublicationItemDto;
 use diesel::prelude::*;
 use serde::{Deserialize, Serialize};
-
-use crate::publications::dto::PublicationItemDto;
 
 #[derive(Debug, Serialize, Deserialize, Queryable, Selectable)]
 #[diesel(table_name = crate::schema::publication_items )]

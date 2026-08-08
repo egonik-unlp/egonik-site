@@ -12,7 +12,7 @@ pub fn Nav() -> impl IntoView {
                     <span class="brand-name">"eduardo gonik"</span>
                 </a>
                 <nav class="nav-links" aria-label="Primary">
-                    <a href="#work">"work"</a>
+                    <a href="/projects">"work"</a>
                     <a href="#skills">"skills"</a>
                     <a href="#research">"research"</a>
                     <a href="#contact">"contact"</a>

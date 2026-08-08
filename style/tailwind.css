@@ -671,6 +671,264 @@
     border-bottom-color: var(--color-gold);
   }
 
+  /* ═══ PUBLICATION CARDS — the metadata highlight grid ═════════════════
+     Rendered by `PublicationItemWithMetadata`. Cards sit on `.section-surface`
+     so `--color-paper` reads as raised, not as another slab of background. */
+  .pub-count {
+    @apply flex items-center;
+    gap: 0.7rem;
+    font-size: 0.8rem;
+    color: var(--color-ink-soft);
+    letter-spacing: 0.02em;
+    margin-bottom: 1.4rem;
+  }
+  .pub-count::before {
+    content: "◆";
+    color: var(--color-gold);
+    font-size: 0.7rem;
+  }
+
+  .pub-empty {
+    @apply italic;
+    color: var(--color-ink-soft);
+    padding: 2rem 0;
+    border-top: 1px solid var(--color-line);
+  }
+
+  .pubcard-grid {
+    @apply grid items-start;
+    grid-template-columns: repeat(auto-fill, minmax(min(100%, 20rem), 1fr));
+    gap: clamp(1rem, 2vw, 1.5rem);
+  }
+
+  .pubcard {
+    @apply relative flex flex-col h-full overflow-hidden;
+    gap: 0.75rem;
+    padding: clamp(1.25rem, 2.2vw, 1.75rem);
+    background-color: var(--color-paper);
+    border: 1px solid var(--color-line);
+    border-radius: 3px;
+    transition:
+      transform 0.35s var(--ease-lens),
+      border-color 0.35s var(--ease-lens),
+      box-shadow 0.35s var(--ease-lens);
+  }
+  /* the lensed edge — a gold hairline that resolves on hover */
+  .pubcard::before {
+    content: "";
+    @apply absolute;
+    inset: 0 auto 0 0;
+    width: 2px;
+    background: linear-gradient(var(--color-gold-hot), var(--color-gold));
+    transform: scaleY(0);
+    transform-origin: top;
+    transition: transform 0.4s var(--ease-expo);
+  }
+  .pubcard:hover {
+    transform: translateY(-3px);
+    border-color: color-mix(in oklch, var(--color-gold) 45%, var(--color-line));
+    box-shadow: 0 18px 40px -28px
+      color-mix(in oklch, var(--color-space) 60%, transparent);
+  }
+  .pubcard:hover::before,
+  .pubcard:focus-within::before {
+    transform: scaleY(1);
+  }
+
+  /* the top-ranked entry takes the full row */
+  .pubcard.is-lead {
+    grid-column: 1 / -1;
+  }
+  .pubcard.is-lead .pubcard-title {
+    font-size: clamp(1.35rem, 1.05rem + 1.2vw, 1.9rem);
+  }
+  .pubcard.is-lead .pubcard-desc {
+    font-size: 1.02rem;
+  }
+
+  .pubcard-top {
+    @apply flex items-center flex-wrap uppercase;
+    gap: 0.5rem 0.7rem;
+    font-family: var(--font-mono);
+    font-size: 0.72rem;
+    letter-spacing: 0.06em;
+  }
+  .pubcard-kind {
+    color: var(--color-ink-soft);
+    border: 1px solid var(--color-line);
+    border-radius: 2px;
+    padding: 0.15rem 0.5rem;
+  }
+  .pubcard-flag {
+    color: var(--color-gold-deep);
+    background: color-mix(in oklch, var(--color-gold) 12%, transparent);
+    border: 1px solid color-mix(in oklch, var(--color-gold) 55%, transparent);
+    border-radius: 2px;
+    padding: 0.15rem 0.5rem;
+  }
+  .pubcard-year {
+    @apply ml-auto tabular-nums;
+    color: var(--color-ink-soft);
+  }
+
+  .pubcard-title {
+    font-family: var(--font-display);
+    font-weight: 700;
+    font-size: clamp(1.05rem, 0.98rem + 0.4vw, 1.2rem);
+    line-height: 1.18;
+    letter-spacing: -0.015em;
+  }
+  .pubcard-title a {
+    transition: color 0.25s var(--ease-lens);
+  }
+  .pubcard-title .arr {
+    @apply inline-block;
+    color: var(--color-gold-deep);
+    opacity: 0;
+    transform: translate(-3px, 3px);
+    transition:
+      opacity 0.25s var(--ease-lens),
+      transform 0.25s var(--ease-lens);
+  }
+  .pubcard:hover .pubcard-title a {
+    color: var(--color-gold-deep);
+  }
+  .pubcard:hover .pubcard-title .arr {
+    opacity: 1;
+    transform: none;
+  }
+
+  .pubcard-venue {
+    font-size: 0.92rem;
+    line-height: 1.45;
+  }
+  .pubcard-journal {
+    @apply italic;
+    color: var(--color-ink);
+  }
+  .pubcard-locator {
+    @apply block;
+    font-family: var(--font-mono);
+    font-size: 0.76rem;
+    color: var(--color-ink-soft);
+    margin-top: 0.2rem;
+  }
+
+  .pubcard-desc {
+    color: var(--color-ink-soft);
+    font-size: 0.95rem;
+    line-height: 1.55;
+  }
+
+  .pubcard-authors {
+    @apply flex flex-wrap list-none p-0 m-0;
+    gap: 0 0.35rem;
+    font-size: 0.85rem;
+    color: var(--color-ink-soft);
+  }
+  .pubcard-authors li:not(:last-child)::after {
+    content: ",";
+  }
+  .pubcard-authors .is-self {
+    @apply font-semibold;
+    color: var(--color-ink);
+  }
+  .pubcard-authors .is-more {
+    font-family: var(--font-mono);
+    font-size: 0.76rem;
+    color: color-mix(in oklch, var(--color-ink-soft) 70%, transparent);
+  }
+
+  .pubcard-tags {
+    @apply flex flex-wrap list-none p-0 m-0;
+    gap: 0.35rem;
+  }
+  .pub-tag {
+    font-family: var(--font-mono);
+    font-size: 0.7rem;
+    letter-spacing: 0.02em;
+    color: var(--color-ink-soft);
+    background-color: var(--color-surface);
+    border: 1px solid var(--color-line-soft);
+    border-radius: 999px;
+    padding: 0.1rem 0.55rem;
+  }
+
+  /* `mt-auto` pins the footer to the bottom, so cards in a row line up */
+  .pubcard-foot {
+    @apply flex flex-wrap items-center mt-auto;
+    gap: 0.45rem 0.9rem;
+    padding-top: 0.9rem;
+    border-top: 1px solid var(--color-line-soft);
+    font-family: var(--font-mono);
+    font-size: 0.76rem;
+    color: var(--color-ink-soft);
+  }
+  .pubcard-metric-value {
+    @apply font-semibold tabular-nums;
+    color: var(--color-gold-deep);
+  }
+  .pubcard-role {
+    @apply lowercase;
+  }
+  .pubcard-role::before {
+    content: "· ";
+    color: var(--color-line);
+  }
+  .pubcard-link {
+    color: var(--color-ink-soft);
+    border-bottom: 1px solid transparent;
+    overflow-wrap: anywhere;
+    transition:
+      color 0.2s var(--ease-lens),
+      border-color 0.2s var(--ease-lens);
+  }
+  .pubcard-link:hover {
+    color: var(--color-gold-deep);
+    border-bottom-color: var(--color-gold);
+  }
+  .pubcard-link.is-open {
+    @apply ml-auto;
+    color: var(--color-gold-deep);
+  }
+
+  /* ── loading placeholders ─────────────────────────────────────────────── */
+  .pubcard.is-skeleton {
+    gap: 0.9rem;
+    min-height: 12rem;
+  }
+  .pubcard.is-skeleton:hover {
+    transform: none;
+    box-shadow: none;
+    border-color: var(--color-line);
+  }
+  .skeleton-line {
+    @apply block;
+    height: 0.7rem;
+    border-radius: 2px;
+    background: linear-gradient(
+      90deg,
+      var(--color-surface) 0%,
+      var(--color-line-soft) 50%,
+      var(--color-surface) 100%
+    );
+    background-size: 200% 100%;
+    animation: shimmer 1.6s linear infinite;
+  }
+  .skeleton-line.is-30 {
+    width: 30%;
+  }
+  .skeleton-line.is-50 {
+    width: 50%;
+  }
+  .skeleton-line.is-70 {
+    width: 70%;
+  }
+  .skeleton-line.is-90 {
+    width: 90%;
+    height: 1.1rem;
+  }
+
   /* ═══ CONTACT — back into the field (dark) ════════════════════════════
      Must stay after .section-* so `.contact-title .lit` beats
      `.section-title .lit` (same specificity, source order decides). */
@@ -834,6 +1092,16 @@
   margin-inline: auto;
   max-width: var(--container-page);
   padding-inline: var(--spacing-gutter);
+}
+
+/* the loading placeholders sweep a light band across themselves */
+@keyframes shimmer {
+  from {
+    background-position: 200% 0;
+  }
+  to {
+    background-position: -200% 0;
+  }
 }
 
 @keyframes scrollpulse {
