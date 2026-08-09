@@ -1,133 +1,28 @@
-use crate::publications::dto::PublicationItemWithMetadataDto;
-use crate::publications::server::{get_all_publications, get_all_publications_mapped};
-use futures_timer::Delay;
 use leptos::prelude::*;
-use leptos::{component, view, IntoView};
-use std::cmp::Reverse;
 
-/// The site owner — highlighted inside the author list of every card.
+use crate::publications::dto::PublicationItemWithMetadataDto;
+use crate::publications::server::get_all_publications_mapped;
+
+/// The site owner — marked inside every author line.
 const SITE_AUTHOR: &str = "Eduardo Gonik";
-/// How many publications make it into the highlight grid.
-const MAX_HIGHLIGHTS: usize = 6;
 /// Authors printed before the list is collapsed into "+n more".
 const MAX_AUTHORS: usize = 3;
-/// Subject chips printed per card.
-const MAX_TAGS: usize = 5;
+/// Subject chips printed per entry.
+const MAX_TAGS: usize = 4;
 
-#[component]
-pub fn ServerButton() -> impl IntoView {
-    let request = Action::new(|_: &()| async move {
-        Delay::new(std::time::Duration::new(1, 0));
-        get_all_publications().await
-    });
-
-    let pending = request.pending();
-    let response = request.value();
-
-    view! {
-        <div class="space-y-4">
-            <button
-                class="btn btn-solid"
-                on:click=move |_| {
-                    request.dispatch(());
-                }
-                disabled=move || pending.get()
-            >
-                {move || { if pending.get() { "Loading..." } else { "Call server" } }}
-            </button>
-
-            <div>
-                {move || {
-                    match response.get() {
-                        None => {
-                            view! { <p class="muted">"The server has not been called yet."</p> }
-                                .into_any()
-                        }
-                        Some(Ok(publications)) => {
-
-                            view! {
-                                <div class="table-wrap">
-                                    <table class="data-table">
-                                        <tr>
-                                            <th>"title"</th>
-                                            <th>"abs"</th>
-                                            <th>"year"</th>
-                                            <th>"journal"</th>
-                                            <th>"link"</th>
-                                        </tr>
-                                        {publications
-                                            .into_iter()
-                                            .map(|publication| {
-                                                view! {
-                                                    <tr>
-                                                        <td class="max-w-sm font-medium">{publication.title}</td>
-                                                        <td class="muted max-w-md">{publication.abs}</td>
-                                                        <td class="tabular-nums whitespace-nowrap">
-                                                            {publication.year}
-                                                        </td>
-                                                        <td class="muted whitespace-nowrap">
-                                                            {publication.journal}
-                                                        </td>
-                                                        <td>{publication.link}</td>
-                                                    </tr>
-                                                }
-                                            })
-                                            .collect_view()}
-                                    </table>
-                                </div>
-                            }
-                                .into_any()
-                        }
-                        Some(Err(error)) => {
-
-                            view! {
-                                <p class="notice notice-error">
-                                    {format!("Server error: {error}")}
-                                </p>
-                            }
-                                .into_any()
-                        }
-                    }
-                }}
-            </div>
-        </div>
+/// "journal-article" -> "Journal article"
+fn humanize(raw: &str) -> String {
+    let spaced = raw.replace(['-', '_'], " ");
+    let mut chars = spaced.chars();
+    match chars.next() {
+        Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
+        None => spaced,
     }
 }
 
-/// Ranks the publications that carry metadata and keeps the strongest few.
-///
-/// The criterion, applied in order:
-/// 1. the hand-curated `featured` flag,
-/// 2. the curated `display.priority` (lower number = more prominent),
-/// 3. citation count, highest first,
-/// 4. year, most recent first.
-///
-/// Only the top [`MAX_HIGHLIGHTS`] survive — this is a highlight reel, not an index.
-fn select_highlights(
-    mut items: Vec<PublicationItemWithMetadataDto>,
-) -> Vec<PublicationItemWithMetadataDto> {
-    items.sort_by_key(|item| {
-        let metadata = &item.metadata;
-        (
-            // `false` sorts before `true`, so negate to float featured work to the top.
-            !metadata.featured.unwrap_or(false),
-            metadata
-                .display
-                .as_ref()
-                .and_then(|display| display.priority)
-                .unwrap_or(i64::MAX),
-            Reverse(
-                metadata
-                    .citations
-                    .as_ref()
-                    .and_then(|citations| citations.count)
-                    .unwrap_or(0),
-            ),
-            Reverse(metadata.year.unwrap_or(item.publication.year as i64)),
-        )
-    });
-    items.truncate(MAX_HIGHLIGHTS);
-    items
+fn non_empty(value: &str) -> Option<String> {
+    let trimmed = value.trim();
+    (!trimmed.is_empty()).then(|| trimmed.to_string())
 }
 
 /// One entry of the author line: a name, a jump over the middle of the list, or
@@ -138,7 +33,9 @@ enum AuthorChunk {
     More(usize),
 }
 
-/// Collapses a long author list while guaranteeing the site owner stays visible.
+/// Collapses a long author list while keeping the site owner visible. These are
+/// group papers with up to sixteen names; the point of the marking is to show
+/// where in the order he actually sits, not to move him to the front.
 fn author_chunks(authors: &[String]) -> Vec<AuthorChunk> {
     let name_chunk = |name: &String| AuthorChunk::Name {
         name: name.clone(),
@@ -175,21 +72,6 @@ fn author_chunks(authors: &[String]) -> Vec<AuthorChunk> {
     }
 }
 
-/// "journal-article" -> "Journal article"
-fn humanize(raw: &str) -> String {
-    let spaced = raw.replace(['-', '_'], " ");
-    let mut chars = spaced.chars();
-    match chars.next() {
-        Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
-        None => spaced,
-    }
-}
-
-fn non_empty(value: &str) -> Option<String> {
-    let trimmed = value.trim();
-    (!trimmed.is_empty()).then(|| trimmed.to_string())
-}
-
 #[component]
 pub fn PublicationsWithMetadata() -> impl IntoView {
     let resource = Resource::new(
@@ -198,109 +80,145 @@ pub fn PublicationsWithMetadata() -> impl IntoView {
     );
 
     view! {
-        <section id="publications" class="section section-surface">
+        <section id="papers" class="section section-band">
             <div class="container">
-                <div class="section-head" data-reveal="">
-                    <h2 class="section-title">
-                        "Selected " <span class="lit">"publications"</span>
-                    </h2>
-                    <p class="section-lede">
-                        "Peer-reviewed work, ranked by editorial priority and citation weight, \
-                         enriched with metadata pulled from OpenAlex and Crossref."
-                    </p>
-                </div>
-
-                <Suspense fallback=move || {
-                    view! { <PublicationsSkeleton /> }
+                // Must be read inside <Suspense/>: outside it the server streams the
+                // fallback while the hydrating client already holds the data, and the
+                // mismatched trees abort hydration instead of recovering.
+                <Suspense fallback=|| {
+                    view! {
+                        <>
+                            <div class="section-head">
+                                <h2 class="section-title">"Papers"</h2>
+                            </div>
+                            <div class="skeleton" role="status" aria-label="Loading publications">
+                                <span aria-hidden="true"></span>
+                                <span aria-hidden="true"></span>
+                                <span aria-hidden="true"></span>
+                            </div>
+                        </>
+                    }
                 }>
-                    <ErrorBoundary fallback=move |errors| {
-                        view! {
-                            <p class="notice notice-error">
-                                {move || {
-                                    format!(
-                                        "Publications could not be loaded: {}",
-                                        errors
-                                            .get()
-                                            .into_iter()
-                                            .map(|(_, error)| error.to_string())
-                                            .collect::<Vec<_>>()
-                                            .join("; "),
-                                    )
-                                }}
-                            </p>
+                    {move || match resource.get() {
+                        None => None,
+                        Some(Err(error)) => {
+                            Some(
+                                view! {
+                                    <>
+                                        <div class="section-head">
+                                            <h2 class="section-title">"Papers"</h2>
+                                        </div>
+                                        <p class="notice notice-error">
+                                            {format!("Publications could not be loaded: {error}")}
+                                        </p>
+                                    </>
+                                }
+                                    .into_any(),
+                            )
                         }
-                    }>
-                        {move || {
-                            resource
-                                .get()
-                                .map(|result| {
-                                    result
-                                        .map(|publications| {
-                                            let total = publications.len();
-                                            let highlights = select_highlights(publications);
-                                            if highlights.is_empty() {
-                                                return view! {
-                                                    <p class="pub-empty">
-                                                        "No publication metadata available right now."
-                                                    </p>
-                                                }
-                                                    .into_any();
-                                            }
-                                            let cards = highlights
-                                                .into_iter()
-                                                .enumerate()
-                                                .map(|(index, item)| {
-                                                    view! { <PublicationItemWithMetadata item lead=index == 0 /> }
-                                                })
-                                                .collect::<Vec<_>>();
-                                            view! {
-                                                <p class="pub-count mono">
-                                                    {format!("{} of {} indexed works", MAX_HIGHLIGHTS.min(total), total)}
-                                                </p>
-                                                <div class="pubcard-grid">{cards}</div>
-                                            }
-                                                .into_any()
-                                        })
-                                })
-                        }}
-                    </ErrorBoundary>
+                        Some(Ok(publications)) => {
+                            Some(view! { <Catalogue publications /> }.into_any())
+                        }
+                    }}
                 </Suspense>
             </div>
         </section>
     }
 }
 
-/// Placeholder cards shown while the server function resolves.
 #[component]
-fn PublicationsSkeleton() -> impl IntoView {
-    let cards = (0..3)
-        .map(|_| {
+fn Catalogue(publications: Vec<PublicationItemWithMetadataDto>) -> impl IntoView {
+    let mut publications = publications;
+
+    // Newest first, then by the curated priority inside a year. The previous build
+    // ranked the whole list by citation count, which quietly sorted a short
+    // bibliography by how well each entry had done. A catalogue is chronological.
+    publications.sort_by_key(|item| {
+        let metadata = &item.metadata;
+        (
+            std::cmp::Reverse(metadata.year.unwrap_or(item.publication.year as i64)),
+            metadata
+                .display
+                .as_ref()
+                .and_then(|display| display.priority)
+                .unwrap_or(i64::MAX),
+        )
+    });
+
+    let total = publications.len();
+
+    if publications.is_empty() {
+        return view! {
+            <>
+                <div class="section-head">
+                    <h2 class="section-title">"Papers"</h2>
+                </div>
+                <p class="row-empty">"No publication metadata available right now."</p>
+            </>
+        }
+        .into_any();
+    }
+
+    // Runs of equal years become groups; the list is already sorted, so a single
+    // pass is enough and the year axis stays in step with the entries under it.
+    let mut groups: Vec<(i64, Vec<PublicationItemWithMetadataDto>)> = Vec::new();
+    for item in publications {
+        let year = item.metadata.year.unwrap_or(item.publication.year as i64);
+        match groups.last_mut() {
+            Some((current, bucket)) if *current == year => bucket.push(item),
+            _ => groups.push((year, vec![item])),
+        }
+    }
+
+    let groups = groups
+        .into_iter()
+        .map(|(year, items)| {
+            let count = items.len();
+            let entries = items
+                .into_iter()
+                .map(|item| view! { <Work item /> })
+                .collect::<Vec<_>>();
             view! {
-                <div class="pubcard is-skeleton" aria-hidden="true">
-                    <span class="skeleton-line is-30"></span>
-                    <span class="skeleton-line is-90"></span>
-                    <span class="skeleton-line is-70"></span>
-                    <span class="skeleton-line is-50"></span>
+                <div class="year-group" data-reveal="">
+                    <h3 class="year-mark">
+                        <time datetime=year.to_string()>{year.to_string()}</time>
+                        <span>
+                            {if count == 1 {
+                                "1 work".to_owned()
+                            } else {
+                                format!("{count} works")
+                            }}
+                        </span>
+                    </h3>
+                    <div>{entries}</div>
                 </div>
             }
         })
         .collect::<Vec<_>>();
 
     view! {
-        <div class="pubcard-grid" role="status" aria-label="Loading publications">
-            {cards}
-        </div>
+        <>
+            <div class="section-head">
+                <h2 class="section-title">"Papers"</h2>
+                <p class="section-count">
+                    {if total == 1 { "1 work".to_owned() } else { format!("{total} works") }}
+                </p>
+            </div>
+            <p class="section-lede">
+                "Nanomaterials and photochemistry, nearly all of it group work with colleagues at
+                 INIFTA. Several of the repositories above exist because one of these needed
+                 something first. Everything links out to the source."
+            </p>
+            <div class="years">{groups}</div>
+        </>
     }
+    .into_any()
 }
 
-/// A single publication rendered as a metadata card.
-///
-/// `lead` promotes the top-ranked entry to a wider, larger card.
+/// A single publication. Every field is optional upstream, so each one either
+/// renders or leaves no trace — there are no empty labels waiting for data.
 #[component]
-pub fn PublicationItemWithMetadata(
-    item: PublicationItemWithMetadataDto,
-    #[prop(optional)] lead: bool,
-) -> impl IntoView {
+fn Work(item: PublicationItemWithMetadataDto) -> impl IntoView {
     let PublicationItemWithMetadataDto {
         publication,
         metadata,
@@ -308,14 +226,10 @@ pub fn PublicationItemWithMetadata(
 
     let title = metadata
         .title
-        .clone()
-        .and_then(|title| non_empty(&title))
+        .as_deref()
+        .and_then(non_empty)
         .unwrap_or_else(|| publication.title.clone());
-    let year = metadata.year.unwrap_or(publication.year as i64);
-    let featured = metadata.featured.unwrap_or(false);
     let kind = metadata.type_.as_deref().map(humanize);
-    // Left as-is ("co-author", "first-author") — the hyphen reads better in mono.
-    let role = metadata.role.as_deref().and_then(non_empty);
 
     let doi = metadata
         .identifiers
@@ -328,11 +242,19 @@ pub fn PublicationItemWithMetadata(
         .or_else(|| non_empty(&publication.link));
     let open_access_url = urls.and_then(|urls| urls.open_access.clone());
 
+    // The database columns for both of these are written as empty strings by the
+    // sync job, so the metadata is the only real source; the fallback is kept for
+    // rows that predate it.
     let venue = metadata
         .venue
-        .clone()
-        .and_then(|venue| non_empty(&venue))
+        .as_deref()
+        .and_then(non_empty)
         .or_else(|| non_empty(&publication.journal));
+    let description = metadata
+        .description
+        .as_deref()
+        .and_then(non_empty)
+        .or_else(|| non_empty(&publication.abs));
 
     // "vol. 16 · no. 7 · pp. 6689–6705" — only the parts that exist.
     let locator = {
@@ -349,23 +271,8 @@ pub fn PublicationItemWithMetadata(
         if let Some(article) = metadata.article_number.as_deref().and_then(non_empty) {
             parts.push(format!("art. {article}"));
         }
-        if let Some(publisher) = metadata.publisher.as_deref().and_then(non_empty) {
-            parts.push(publisher);
-        }
         (!parts.is_empty()).then(|| parts.join(" · "))
     };
-
-    let description = metadata
-        .description
-        .as_deref()
-        .and_then(non_empty)
-        .or_else(|| non_empty(&publication.abs));
-
-    let date = metadata
-        .publication_date
-        .clone()
-        .or_else(|| metadata.presentation_date.clone())
-        .and_then(|date| non_empty(&date));
 
     let citations = metadata.citations.as_ref();
     let citation_count = citations.and_then(|citations| citations.count);
@@ -379,8 +286,8 @@ pub fn PublicationItemWithMetadata(
 
     let authors = metadata
         .authors
-        .clone()
-        .map(|authors| author_chunks(&authors))
+        .as_deref()
+        .map(author_chunks)
         .filter(|chunks| !chunks.is_empty())
         .map(|chunks| {
             chunks
@@ -390,28 +297,21 @@ pub fn PublicationItemWithMetadata(
                         name,
                         is_site_author,
                     } => {
-                        let class = if is_site_author {
-                            "pub-author is-self"
-                        } else {
-                            "pub-author"
-                        };
+                        let class = if is_site_author { "is-self" } else { "" };
                         view! { <li class=class>{name}</li> }.into_any()
                     }
-                    AuthorChunk::Gap => {
-                        view! { <li class="pub-author is-more">"…"</li> }.into_any()
-                    }
+                    AuthorChunk::Gap => view! { <li>"…"</li> }.into_any(),
                     AuthorChunk::More(count) => {
-                        view! { <li class="pub-author is-more">{format!("+{count} more")}</li> }
-                            .into_any()
+                        view! { <li>{format!("+{count} more")}</li> }.into_any()
                     }
                 })
                 .collect::<Vec<_>>()
         });
 
-    // Subjects, broadest first, de-duplicated across the three metadata vocabularies.
+    // Subjects, broadest first, de-duplicated across the three vocabularies.
     let tags = {
         let mut tags: Vec<String> = Vec::new();
-        for source in [&metadata.categories, &metadata.domains, &metadata.keywords] {
+        for source in [&metadata.keywords, &metadata.domains, &metadata.categories] {
             for tag in source.iter().flatten() {
                 let tag = tag.trim().to_lowercase();
                 if !tag.is_empty() && !tags.contains(&tag) {
@@ -420,90 +320,66 @@ pub fn PublicationItemWithMetadata(
             }
         }
         tags.truncate(MAX_TAGS);
-        (!tags.is_empty()).then_some(tags)
-    };
-    let tags = tags.map(|tags| {
-        tags.into_iter()
-            .map(|tag| view! { <li class="pub-tag">{humanize(&tag)}</li> })
-            .collect::<Vec<_>>()
-    });
-
-    let card_class = if lead {
-        "pubcard is-lead"
-    } else {
-        "pubcard"
+        tags
     };
 
-    // No `data-reveal` here: interactions.js snapshots those elements once at
-    // load, and these cards only exist after the Suspense payload streams in —
-    // they would never be observed, and would stay at opacity 0 forever.
     view! {
-        <article class=card_class>
-            <header class="pubcard-top">
-                {kind.map(|kind| view! { <span class="pubcard-kind">{kind}</span> })}
-                {featured
-                    .then(|| {
+        <article class="work-item">
+            <div class="work-main">
+                <h4 class="work-title">
+                    {match primary_url {
+                        Some(url) => {
+                            view! {
+                                <a href=url target="_blank" rel="noopener noreferrer">
+                                    {title}
+                                </a>
+                            }
+                                .into_any()
+                        }
+                        None => view! { <span>{title}</span> }.into_any(),
+                    }}
+                </h4>
+
+                {venue
+                    .map(|venue| {
                         view! {
-                            <span class="pubcard-flag">
-                                <span aria-hidden="true">"◆ "</span>
-                                "featured"
-                            </span>
+                            <p class="work-venue">
+                                <b>{venue}</b>
+                                {locator.map(|locator| format!(" · {locator}"))}
+                            </p>
                         }
                     })}
-                <time class="pubcard-year" datetime=date.clone().unwrap_or_else(|| year.to_string())>
-                    {year.to_string()}
-                </time>
-            </header>
 
-            <h3 class="pubcard-title">
-                {match primary_url.clone() {
-                    Some(url) => {
-                        view! {
-                            <a href=url target="_blank" rel="noopener noreferrer">
-                                {title.clone()}
-                                <span class="arr" aria-hidden="true">
-                                    " ↗"
-                                </span>
-                            </a>
-                        }
-                            .into_any()
-                    }
-                    None => view! { <span>{title.clone()}</span> }.into_any(),
-                }}
-            </h3>
+                {authors.map(|authors| view! { <ul class="work-authors">{authors}</ul> })}
+                {description
+                    .map(|description| view! { <p class="work-abstract">{description}</p> })}
 
-            {venue
-                .map(|venue| {
-                    view! {
-                        <p class="pubcard-venue">
-                            <span class="pubcard-journal">{venue}</span>
-                            {locator.map(|locator| view! { <span class="pubcard-locator">{locator}</span> })}
-                        </p>
-                    }
-                })}
+                <div class="work-foot">
+                    {kind.map(|kind| view! { <span class="chip">{kind}</span> })}
+                    {tags
+                        .into_iter()
+                        .map(|tag| view! { <span class="chip is-topic">{tag}</span> })
+                        .collect::<Vec<_>>()}
+                </div>
+            </div>
 
-            {description.map(|description| view! { <p class="pubcard-desc">{description}</p> })}
-
-            {authors.map(|authors| view! { <ul class="pubcard-authors">{authors}</ul> })}
-
-            {tags.map(|tags| view! { <ul class="pubcard-tags">{tags}</ul> })}
-
-            <footer class="pubcard-foot">
+            // The margin: the ways out to the source, and the count set as one more
+            // small fact rather than as a figure to be impressed by.
+            <div class="work-margin">
                 {citation_count
                     .map(|count| {
                         view! {
-                            <span class="pubcard-metric" title=citation_source.unwrap_or_default()>
-                                <b class="pubcard-metric-value">{count.to_string()}</b>
+                            <p class="work-cites" title=citation_source.unwrap_or_default()>
+                                <b>{count.to_string()}</b>
                                 {if count == 1 { " citation" } else { " citations" }}
-                            </span>
+                            </p>
                         }
                     })}
-                {role.map(|role| view! { <span class="pubcard-role">{role}</span> })}
                 {doi
                     .map(|doi| {
                         view! {
                             <a
-                                class="pubcard-link"
+                                class="work-link"
                                 href=format!("https://doi.org/{doi}")
                                 target="_blank"
                                 rel="noopener noreferrer"
@@ -515,18 +391,12 @@ pub fn PublicationItemWithMetadata(
                 {open_access_url
                     .map(|url| {
                         view! {
-                            <a
-                                class="pubcard-link is-open"
-                                href=url
-                                target="_blank"
-                                rel="noopener noreferrer"
-                            >
-                                "Open access"
-                                <span aria-hidden="true">" ↗"</span>
+                            <a class="work-link" href=url target="_blank" rel="noopener noreferrer">
+                                "Open access ↗"
                             </a>
                         }
                     })}
-            </footer>
+            </div>
         </article>
     }
 }

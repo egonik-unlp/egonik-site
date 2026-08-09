@@ -1,106 +1,165 @@
 @import "tailwindcss";
 
 /* ═══════════════════════════════════════════════════════════════════════════
-   Eduardo Gonik — "Lensing field"
-   Light bending around mass: a deep-field hero resolves into a precise, light
-   body, closing back into space. One luminous accent = lensed light (gold).
+   Eduardo Gonik — "Bench notes"
+
+   The subject is one practice with two sides: chemistry research, and the
+   software that research kept needing. The page is built around that axis
+   rather than around a portfolio of achievements, so the loud moves are
+   deliberately absent — no drenched hero, no shouted display caps, no
+   promoted "featured" tiles, no hero metric.
+
+   Ground is plotter paper: a pale mineral green, never cream, never
+   blue-white. Vermilion is the working pen — it marks the research side of
+   the axis, the one solid button, and the state of a selection. It is an
+   accent with a job, not a wash. The page closes into a deep bottle-green
+   slab, the only saturated surface.
+
+   One typeface, three widths. Archivo carries a `wdth` axis from 62 to 125,
+   so the reading voice (normal), the heading voice (slightly wide, mid
+   weight) and the data voice (condensed) are the same letters under tension.
+   Headings sit at weight 600 rather than 800 — present, not emphatic.
 
    This file is the single style source. `cargo-leptos` compiles it via
-   `tailwind-input-file` in Cargo.toml; `style-file` (Sass) is deliberately
-   unset, so anything not reachable from here is never built.
+   `tailwind-input-file`; `style-file` (Sass) is deliberately unset, so
+   anything not reachable from here is never built.
+
+   No JavaScript. Motion is CSS-only, reveals are progressive enhancement
+   over an already-visible default, and nothing about legibility depends on
+   a script having run.
    ═══════════════════════════════════════════════════════════════════════════ */
 
 /* ---------------------------------------------------------------------------
-   Design tokens. Every entry here also becomes a utility, so the palette is
-   usable straight from `view!` macros without touching this file:
-     --color-gold      -> text-gold / bg-gold / border-gold
-     --font-display    -> font-display
-     --ease-lens       -> ease-lens
-     --container-page  -> max-w-page
-     --spacing-gutter  -> px-gutter
-   `@theme static` emits all of them, including ones only referenced by the
-   component rules below (which Tailwind's usage detection would otherwise
-   tree-shake away).
+   Design tokens. Every entry also becomes a utility, so the palette is usable
+   straight from `view!`:
+     --color-pen      -> text-pen / bg-pen / border-pen
+     --container-page -> max-w-page
+     --spacing-gutter -> px-gutter
+
+   Every text/ground pair was checked against WCAG AA before it shipped:
+     ink   on paper 16.3   ink-2 on paper 7.9   ink-3 on paper   5.4
+     ink   on paper-2 14.9 ink-2 on paper-2 7.2 ink-3 on paper-2 4.9
+     pen-ink on paper 6.7  paper on pen-slab 5.8
+     on-deep on deep 14.8  on-deep-2 on deep 7.4  pen-lit on deep 7.5
+   `--color-pen` is a MARK colour (fills, bars, rules). It does not carry
+   text: use `--color-pen-ink` on paper, `--color-pen-lit` on deep.
 --------------------------------------------------------------------------- */
 @theme static {
-  /* Light body — cool near-white "lab light", never cream. */
-  --color-paper: oklch(0.983 0.006 265);
-  --color-surface: oklch(0.958 0.008 265);
-  --color-ink: oklch(0.215 0.021 275);
-  --color-ink-soft: oklch(0.435 0.021 273);
-  --color-line: oklch(0.905 0.012 265);
-  --color-line-soft: oklch(0.935 0.010 265);
+  /* Plotter paper — pale mineral green. Two grounds, no third. */
+  --color-paper: oklch(0.962 0.014 156);
+  --color-paper-2: oklch(0.932 0.018 156);
 
-  /* Deep field — the dark sections (hero, contact, footer). */
-  --color-space: oklch(0.170 0.030 273);
-  --color-space-2: oklch(0.128 0.028 274);
-  --color-on-space: oklch(0.962 0.010 265);
-  --color-on-space-soft: oklch(0.735 0.020 268);
-  --color-space-line: oklch(1 0 0 / 0.12);
+  --color-ink: oklch(0.198 0.022 168);
+  --color-ink-2: oklch(0.41 0.02 168);
+  --color-ink-3: oklch(0.5 0.018 168);
 
-  /* Lensed light — the single luminous accent. */
-  --color-gold: oklch(0.815 0.135 79);
-  --color-gold-hot: oklch(0.905 0.085 90);
-  --color-gold-deep: oklch(0.470 0.105 62); /* passes contrast on paper */
+  --color-rule: oklch(0.858 0.02 156);
+  --color-rule-soft: oklch(0.905 0.018 156);
+  /* interactive borders only — clears 3:1 against both papers */
+  --color-rule-strong: oklch(0.6 0.02 160);
 
-  /* Role aliases kept for the pre-existing widgets (.muted, .data-table). */
-  --color-muted: var(--color-ink-soft);
-  --color-accent: var(--color-gold-deep);
+  /* The pen. */
+  --color-pen: oklch(0.555 0.198 32); /* marks, fills, bars — not text */
+  --color-pen-ink: oklch(0.468 0.163 32); /* pen as text on paper */
+  --color-pen-slab: oklch(0.505 0.185 32); /* solid button, filled marks */
+  --color-pen-lit: oklch(0.76 0.15 50); /* pen on the deep slab */
 
-  --font-display: "Bricolage Grotesque", "Hanken Grotesk", system-ui, sans-serif;
-  --font-body: "Hanken Grotesk", system-ui, -apple-system, "Segoe UI", sans-serif;
-  --font-mono: "Spline Sans Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
-  /* `font-sans` stays valid and resolves to the body face. */
-  --font-sans: var(--font-body);
+  /* Tints of the pen, declared rather than mixed.
+     `color-mix(in oklch, var(--color-pen) 22%, var(--color-paper))` looks like
+     the obvious way to get these, and it is wrong: OKLCH interpolates hue along
+     the shorter arc, and vermilion (32°) to mineral green (156°) is shorter
+     going through yellow. Every such mix lands on khaki. These are picked
+     directly on the warm side and checked in-gamut. */
+  --color-pen-tint: oklch(0.885 0.053 38); /* the research fill */
+  --color-pen-tint-2: oklch(0.84 0.076 38); /* its hover */
+  --color-pen-wash: oklch(0.945 0.026 38); /* notice grounds */
 
-  --container-page: 1120px;
-  --spacing-gutter: clamp(1.25rem, 4vw, 3rem);
+  /* The deep slab — bottle green, not black, not navy. */
+  --color-deep: oklch(0.228 0.04 170);
+  --color-deep-2: oklch(0.168 0.032 172);
+  --color-on-deep: oklch(0.955 0.012 156);
+  --color-on-deep-2: oklch(0.742 0.02 160);
+  --color-deep-rule: oklch(1 0 0 / 0.15);
 
-  --ease-lens: cubic-bezier(0.22, 1, 0.36, 1); /* ease-out-quart-ish */
-  --ease-expo: cubic-bezier(0.16, 1, 0.3, 1);
+  /* Aliases the older data widgets still reference. */
+  --color-muted: var(--color-ink-2);
+  --color-accent: var(--color-pen-ink);
+  --color-surface: var(--color-paper-2);
+  --color-line: var(--color-rule);
+
+  /* One family. Width does the work weight usually does. */
+  --font-sans: "Archivo", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-body: var(--font-sans);
+  --font-display: var(--font-sans);
+  --font-mono: var(--font-sans);
+
+  --container-page: 1180px;
+  --spacing-gutter: clamp(1.15rem, 4vw, 3.25rem);
+
+  --ease-out-quart: cubic-bezier(0.25, 1, 0.5, 1);
+  --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
 }
 
-/* Stacking order is not a Tailwind theme namespace — plain custom properties. */
 :root {
-  --z-nav: 100;
+  --z-rail: 100;
   --z-overlay: 200;
+  --rail-h: 3.25rem;
 }
 
 /* ---------------------------------------------------------------------------
-   Web fonts. NOTE: these files are not in `assets/` yet — drop
-   bricolage.woff2 / hanken.woff2 / spline-mono.woff2 into `assets/fonts/` and
-   they are picked up automatically. Until then every stack falls back to
-   system faces (font-display: swap), so nothing breaks, you just get 404s.
+   One variable file, 601 glyphs, latin + latin-ext (Spanish venue titles and
+   accented co-author names both need it). Axes: wght 100..900, wdth 62..125.
 --------------------------------------------------------------------------- */
 @font-face {
-  font-family: "Bricolage Grotesque";
-  src: url("/fonts/bricolage.woff2") format("woff2");
-  font-weight: 200 800;
-  font-style: normal;
-  font-display: swap;
-}
-@font-face {
-  font-family: "Hanken Grotesk";
-  src: url("/fonts/hanken.woff2") format("woff2");
-  font-weight: 300 800;
-  font-style: normal;
-  font-display: swap;
-}
-@font-face {
-  font-family: "Spline Sans Mono";
-  src: url("/fonts/spline-mono.woff2") format("woff2");
-  font-weight: 300 700;
+  font-family: "Archivo";
+  src: url("/fonts/archivo.woff2") format("woff2-variations");
+  font-weight: 100 900;
+  font-stretch: 62% 125%;
   font-style: normal;
   font-display: swap;
 }
 
 /* ---------------------------------------------------------------------------
-   Base: page defaults.
+   The type voices, as real utilities rather than component classes.
+
+   `@utility`, not `.u-data { }` inside `@layer components`: Tailwind v4's
+   `@apply` only accepts registered utilities, and these are applied by two
+   dozen component rules below.
 --------------------------------------------------------------------------- */
+
+/* Labels, statuses, counts. Condensed so dense rows fit without dropping the
+   type size below what is comfortable to read. */
+@utility u-data {
+  font-variation-settings: "wdth" 70;
+  font-weight: 600;
+  font-size: 0.775rem;
+  letter-spacing: 0.075em;
+  text-transform: uppercase;
+  line-height: 1.25;
+}
+
+/* The same voice in sentence case, for strings too long to shout: venues,
+   author lines, captions, tech lists. */
+@utility u-data-lc {
+  font-variation-settings: "wdth" 76;
+  font-weight: 500;
+  font-size: 0.83rem;
+  letter-spacing: 0.015em;
+  line-height: 1.35;
+}
+
+@utility u-narrow {
+  max-width: 68ch;
+}
+
+@utility tabular {
+  font-variant-numeric: tabular-nums;
+}
+
 @layer base {
   html {
     scroll-behavior: smooth;
-    scroll-padding-top: 4.5rem; /* the fixed nav */
+    scroll-padding-top: calc(var(--rail-h) + 1.25rem);
     -webkit-text-size-adjust: 100%;
   }
 
@@ -108,21 +167,25 @@
     background-color: var(--color-paper);
     color: var(--color-ink);
     font-family: var(--font-body);
-    font-size: clamp(1rem, 0.96rem + 0.2vw, 1.075rem);
+    font-variation-settings: "wdth" 100;
+    font-size: clamp(1rem, 0.955rem + 0.22vw, 1.09rem);
     line-height: 1.6;
     font-weight: 400;
     -webkit-font-smoothing: antialiased;
     text-rendering: optimizeLegibility;
   }
 
+  /* Weight 600 and a modest width. The previous build set headings at 800 /
+     wdth 116 in all-caps, which is what made the page read as boastful before
+     a single word was read. */
   h1,
   h2,
   h3,
   h4 {
-    font-family: var(--font-display);
-    font-weight: 800;
-    line-height: 1.05;
-    letter-spacing: -0.025em;
+    font-variation-settings: "wdth" 104;
+    font-weight: 600;
+    line-height: 1.1;
+    letter-spacing: -0.02em;
     text-wrap: balance;
   }
 
@@ -130,962 +193,885 @@
     text-wrap: pretty;
   }
 
-  /* Links inherit by default — the chrome (nav, contact rows, work rows)
-     colours them itself. Use `.link` for accent-coloured prose links. */
   a {
     color: inherit;
     text-decoration: none;
   }
 
+  :focus-visible {
+    outline: 2px solid var(--color-pen);
+    outline-offset: 3px;
+    border-radius: 1px;
+  }
+
   ::selection {
-    background-color: var(--color-gold);
-    color: var(--color-ink);
+    background-color: var(--color-pen);
+    color: var(--color-paper);
+  }
+
+  time {
+    font-variant-numeric: tabular-nums;
   }
 }
 
-/* ---------------------------------------------------------------------------
-   Components. Kept here rather than as long class strings in view! macros, so
-   the markup stays readable and restyling does not mean touching Rust.
-   Descendant selectors mean a <table class="data-table"> needs no classes on
-   its own th/td.
---------------------------------------------------------------------------- */
 @layer components {
-  /* ═══ LAYOUT PRIMITIVES ═══════════════════════════════════════════════ */
-  /* `.container` is NOT defined here: Tailwind ships a core `container`
-     utility, and @layer utilities beats @layer components — its per-breakpoint
-     max-widths would silently override ours. It is extended via @utility
-     below the layer block instead. */
-
-  .narrow {
-    max-width: 760px;
+  /* ═══ PRIMITIVES ══════════════════════════════════════════════════════ */
+  .skip-link {
+    @apply absolute left-4 -translate-y-24 px-4 py-2;
+    z-index: var(--z-overlay);
+    background: var(--color-ink);
+    color: var(--color-paper);
+    transition: transform 0.2s var(--ease-out-quart);
+  }
+  .skip-link:focus {
+    @apply translate-y-4;
   }
 
-  .mono {
-    font-family: var(--font-mono);
-    font-weight: 400;
-    font-feature-settings: "ss01";
-  }
-
-  .link {
-    color: var(--color-accent);
-    text-underline-offset: 2px;
-  }
-  .link:hover {
-    text-decoration-line: underline;
-  }
-
-  /* ═══ REVEAL MOTION ═══════════════════════════════════════════════════
-     Progressive: `[data-reveal]` elements are only hidden once something
-     puts `class="js"` on <html>. An IntersectionObserver then adds
-     `is-visible`. With no JS the content simply renders. */
-  .js [data-reveal] {
-    opacity: 0;
-    transform: translateY(18px);
-    transition:
-      opacity 0.7s var(--ease-lens),
-      transform 0.7s var(--ease-lens);
-  }
-  .js [data-reveal].is-visible {
-    opacity: 1;
-    transform: none;
-  }
-
-  /* ═══ NAV ═════════════════════════════════════════════════════════════ */
-  .site-nav {
-    @apply fixed;
-    inset: 0 0 auto 0;
-    z-index: var(--z-nav);
-    border-bottom: 1px solid transparent;
-    color: var(--color-on-space);
-    transition:
-      background 0.4s var(--ease-lens),
-      border-color 0.4s var(--ease-lens),
-      backdrop-filter 0.4s var(--ease-lens);
-  }
-  /* toggled by scroll JS once the hero is behind you */
-  .site-nav.is-solid {
-    background: color-mix(in oklch, var(--color-paper) 82%, transparent);
-    backdrop-filter: saturate(160%) blur(12px);
-    border-bottom-color: var(--color-line);
+  /* ═══ NAV RAIL ════════════════════════════════════════════════════════
+     Opaque and sticky from the first paint. The nav this replaces was
+     transparent until a scroll script added `.is-solid`; that script was
+     never loaded, so every link sat near-white on the near-white body.
+     Nothing here depends on JavaScript, so that cannot recur. */
+  .rail {
+    @apply sticky top-0;
+    z-index: var(--z-rail);
+    background: var(--color-paper);
     color: var(--color-ink);
+    border-bottom: 1px solid var(--color-rule);
   }
-
-  .nav-inner {
-    @apply flex items-center justify-between;
-    height: 4.5rem;
+  .rail-inner {
+    @apply flex items-center justify-between gap-4;
+    height: var(--rail-h);
   }
-
-  .brand {
-    @apply inline-flex items-center font-medium;
-    gap: 0.65rem;
-    font-family: var(--font-mono);
-    font-size: 0.9rem;
-    letter-spacing: 0.01em;
+  .rail-brand {
+    @apply inline-flex shrink-0 items-baseline gap-2;
+    font-variation-settings: "wdth" 100;
+    font-weight: 600;
+    font-size: 0.94rem;
+    letter-spacing: -0.005em;
   }
-  .brand-mark {
-    color: var(--color-gold);
-    font-size: 1.05rem;
-    line-height: 1;
+  .rail-brand .mark {
+    font-variation-settings: "wdth" 62;
+    font-weight: 700;
+    color: var(--color-pen-ink);
   }
-
-  .nav-links {
-    @apply flex;
-    gap: clamp(1rem, 2.4vw, 2rem);
-    font-family: var(--font-mono);
-    font-size: 0.85rem;
+  .rail-nav {
+    @apply flex items-center;
+    gap: clamp(0.85rem, 2.4vw, 2rem);
   }
-  .nav-links a {
-    @apply relative;
-    opacity: 0.82;
-    padding-block: 0.25rem;
-    transition: opacity 0.2s var(--ease-lens);
+  .rail-nav a {
+    @apply relative py-1;
+    font-variation-settings: "wdth" 78;
+    font-weight: 600;
+    font-size: 0.82rem;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    color: var(--color-ink-2);
+    transition: color 0.2s var(--ease-out-quart);
   }
-  .nav-links a::after {
+  .rail-nav a::after {
     content: "";
-    @apply absolute left-0 bottom-0 w-full;
+    @apply absolute bottom-0 left-0 w-full;
     height: 1px;
-    background-color: var(--color-gold);
+    background: var(--color-pen);
     transform: scaleX(0);
     transform-origin: left;
-    transition: transform 0.3s var(--ease-lens);
+    transition: transform 0.3s var(--ease-out-quart);
   }
-  .nav-links a:hover {
-    opacity: 1;
+  .rail-nav a:hover {
+    color: var(--color-ink);
   }
-  .nav-links a:hover::after {
+  .rail-nav a:hover::after {
     transform: scaleX(1);
   }
 
-  /* ═══ HERO — the deep field ═══════════════════════════════════════════ */
-  .hero {
-    @apply relative flex items-center overflow-hidden isolate;
-    min-height: 100svh;
-    background: radial-gradient(
-      120% 90% at 68% 42%,
-      var(--color-space) 0%,
-      var(--color-space-2) 70%
-    );
-    color: var(--color-on-space);
+  /* ═══ MASTHEAD ════════════════════════════════════════════════════════
+     A quiet slab, not a drench: the second paper tone, a faint ruling, and
+     one rule at the bottom. */
+  .masthead {
+    @apply relative isolate overflow-hidden;
+    background: var(--color-paper-2);
+    color: var(--color-ink);
+    border-bottom: 1px solid var(--color-rule);
+    padding-block: clamp(2.75rem, 7vh, 4.5rem) clamp(2.5rem, 6vh, 4rem);
   }
-  /* full-bleed backdrop for the lensing animation */
-  .lens-canvas {
-    @apply absolute inset-0 w-full h-full block;
+  /* chart-recorder ruling, drawn not imported */
+  .masthead::before {
+    content: "";
+    @apply pointer-events-none absolute inset-0;
+    background-image: repeating-linear-gradient(
+      to bottom,
+      color-mix(in oklch, var(--color-ink) 5%, transparent) 0 1px,
+      transparent 1px 3.25rem
+    );
     z-index: -1;
   }
-  .hero-inner {
-    padding-block: 8rem 6rem;
-    max-width: 46rem;
+  .masthead-grid {
+    @apply grid items-end;
+    grid-template-columns: minmax(0, 1fr) clamp(9.5rem, 20vw, 15rem);
+    gap: clamp(1.75rem, 5vw, 3.5rem);
   }
-  .hero-byline {
-    @apply inline-flex items-center;
+
+  .masthead-name {
+    @apply u-data;
+    color: var(--color-ink-3);
+    margin-bottom: 1rem;
+  }
+  .masthead-title {
+    /* was clamp(...5.2rem) at weight 800 — this is the single biggest
+       contributor to how loud the page reads, so it comes down hard */
+    font-size: clamp(1.85rem, 1.1rem + 2.9vw, 3.15rem);
+    font-weight: 600;
+    font-variation-settings: "wdth" 102;
+    letter-spacing: -0.024em;
+    line-height: 1.08;
+    max-width: 22ch;
+  }
+  .masthead-title em {
+    @apply not-italic;
+    color: var(--color-ink-2);
+  }
+  .masthead-lede {
+    margin-top: clamp(1.25rem, 2.5vw, 1.75rem);
+    max-width: 58ch;
+    font-size: clamp(1rem, 0.97rem + 0.28vw, 1.11rem);
+    line-height: 1.62;
+    color: var(--color-ink-2);
+  }
+  .masthead-lede strong {
+    @apply font-semibold;
+    color: var(--color-ink);
+  }
+
+  .masthead-actions {
+    @apply flex flex-wrap items-center;
     gap: 0.6rem;
-    margin-bottom: 1.6rem;
-    font-family: var(--font-mono);
-    font-size: 0.9rem;
-    color: var(--color-gold);
-  }
-  .hero-byline::before {
-    content: "";
-    @apply inline-block;
-    width: 1.8rem;
-    height: 1px;
-    background-color: var(--color-gold);
-  }
-  .hero-title {
-    font-size: clamp(2.3rem, 1.2rem + 5vw, 5rem);
-    letter-spacing: -0.03em;
-    line-height: 0.98;
-    overflow-wrap: break-word;
-  }
-  .hero-title .soft {
-    color: var(--color-on-space-soft);
-  }
-  .hero-title .lit {
-    color: var(--color-gold-hot);
-  }
-  .hero-lede {
-    margin-top: 1.8rem;
-    max-width: 40ch;
-    font-size: clamp(1.05rem, 1rem + 0.4vw, 1.25rem);
-    color: var(--color-on-space-soft);
-    line-height: 1.6;
-  }
-  .hero-actions {
-    @apply flex flex-wrap;
-    gap: 0.9rem;
-    margin-top: 2.6rem;
-  }
-  .hero-meta {
-    margin-top: 3rem;
-    font-family: var(--font-mono);
-    font-size: 0.8rem;
-    color: var(--color-on-space-soft);
-    letter-spacing: 0.01em;
+    margin-top: clamp(1.5rem, 3vw, 2rem);
   }
 
-  .hero-scroll {
-    @apply absolute inline-flex flex-col items-center uppercase;
-    left: 50%;
-    bottom: 1.6rem;
-    transform: translateX(-50%);
-    gap: 0.5rem;
-    font-family: var(--font-mono);
-    font-size: 0.72rem;
-    letter-spacing: 0.18em;
-    color: var(--color-on-space-soft);
-    opacity: 0.7;
+  /* the readout strip — plain facts, set like a specimen label */
+  .readout {
+    @apply grid list-none p-0;
+    grid-template-columns: repeat(auto-fit, minmax(9.5rem, 1fr));
+    gap: 0;
+    margin: clamp(2rem, 4.5vw, 3rem) 0 0;
+    border-top: 1px solid var(--color-rule);
   }
-  .hero-scroll::after {
-    content: "";
-    width: 1px;
-    height: 2.2rem;
-    background: linear-gradient(var(--color-gold), transparent);
-    animation: scrollpulse 2.4s var(--ease-lens) infinite;
+  .readout > div {
+    padding: 0.85rem 1rem 0.85rem 0;
+    border-bottom: 1px solid var(--color-rule-soft);
+  }
+  .readout dt {
+    @apply u-data;
+    color: var(--color-ink-3);
+    margin-bottom: 0.3rem;
+  }
+  .readout dd {
+    @apply m-0;
+    font-variation-settings: "wdth" 92;
+    font-weight: 500;
+    font-size: 0.95rem;
+    line-height: 1.32;
   }
 
-  /* ═══ BUTTONS ═════════════════════════════════════════════════════════
-     One base, three skins. The base reads ink-on-paper; dark sections flip
-     it via the context rule below, so `.btn` works on either background. */
+  /* ═══ PORTRAIT — duotone, the only photograph in the build ════════════ */
+  .portrait {
+    @apply relative block w-full;
+    aspect-ratio: 1;
+  }
+  .portrait img {
+    @apply block h-full w-full object-cover;
+    filter: url(#duotone) contrast(1.04);
+    border: 1px solid var(--color-rule);
+  }
+
+  /* ═══ BUTTONS ═════════════════════════════════════════════════════════ */
   .btn {
     --btn-bg: transparent;
     --btn-fg: var(--color-ink);
-    --btn-bd: var(--color-line);
-    @apply inline-flex items-center justify-center gap-2
-           whitespace-nowrap cursor-pointer select-none;
-    padding: 0.8rem 1.4rem;
-    border-radius: 2px;
-    font-family: var(--font-mono);
-    font-size: 0.88rem;
-    font-weight: 500;
+    --btn-bd: var(--color-rule-strong);
+    @apply inline-flex cursor-pointer select-none items-center justify-center gap-2 whitespace-nowrap;
+    padding: 0.62rem 1.1rem;
+    border-radius: 1px;
+    font-variation-settings: "wdth" 80;
+    font-weight: 600;
+    font-size: 0.84rem;
+    letter-spacing: 0.045em;
+    text-transform: uppercase;
     background: var(--btn-bg);
     color: var(--btn-fg);
     border: 1px solid var(--btn-bd);
     transition:
-      transform 0.15s var(--ease-lens),
-      background 0.2s var(--ease-lens),
-      border-color 0.2s var(--ease-lens),
-      box-shadow 0.3s var(--ease-lens),
-      color 0.2s var(--ease-lens);
-  }
-  .hero .btn,
-  .contact .btn {
-    --btn-fg: var(--color-on-space);
-    --btn-bd: var(--color-space-line);
+      background 0.22s var(--ease-out-quart),
+      color 0.22s var(--ease-out-quart),
+      border-color 0.22s var(--ease-out-quart),
+      transform 0.14s var(--ease-out-quart);
   }
   .btn:active {
     transform: translateY(1px);
-  }
-  .btn:focus-visible {
-    outline: 2px solid var(--color-gold);
-    outline-offset: 2px;
   }
   .btn:disabled {
     opacity: 0.55;
     cursor: not-allowed;
   }
-
-  /* the lensed call to action */
-  .btn-primary,
-  .hero .btn-primary,
-  .contact .btn-primary {
-    --btn-bg: var(--color-gold);
-    --btn-fg: oklch(0.22 0.03 60);
-    --btn-bd: var(--color-gold);
-    box-shadow: 0 0 0 0 color-mix(in oklch, var(--color-gold) 60%, transparent);
-  }
-  .btn-primary:hover:not(:disabled) {
-    box-shadow: 0 6px 30px -6px color-mix(in oklch, var(--color-gold) 70%, transparent);
-    transform: translateY(-2px);
-  }
-
-  .btn-ghost:hover:not(:disabled) {
-    --btn-bd: var(--color-gold);
-    --btn-fg: var(--color-gold);
-  }
-
-  /* solid ink button — the plain form buttons outside the landing chrome */
-  .btn-solid,
-  .hero .btn-solid,
-  .contact .btn-solid {
-    --btn-bg: var(--color-ink);
-    --btn-fg: var(--color-paper);
+  .btn:hover:not(:disabled) {
     --btn-bd: var(--color-ink);
   }
+
+  /* the one solid vermilion element on the light half of the page */
+  .btn-solid {
+    --btn-bg: var(--color-pen-slab);
+    --btn-fg: var(--color-paper);
+    --btn-bd: var(--color-pen-slab);
+  }
   .btn-solid:hover:not(:disabled) {
-    --btn-bg: var(--color-accent);
-    --btn-bd: var(--color-accent);
+    --btn-bg: var(--color-ink);
+    --btn-bd: var(--color-ink);
   }
 
-  /* ═══ SECTIONS (light body) ═══════════════════════════════════════════ */
+  .closing .btn {
+    --btn-fg: var(--color-on-deep);
+    --btn-bd: oklch(1 0 0 / 0.45);
+  }
+  .closing .btn:hover:not(:disabled) {
+    --btn-bg: var(--color-on-deep);
+    --btn-fg: var(--color-deep-2);
+    --btn-bd: var(--color-on-deep);
+  }
+
+  /* ═══ SECTIONS ════════════════════════════════════════════════════════ */
   .section {
-    padding-block: clamp(4.5rem, 10vh, 8rem);
+    padding-block: clamp(3.25rem, 8vh, 5.5rem);
   }
-  .section-surface {
-    background-color: var(--color-surface);
+  .section-band {
+    background-color: var(--color-paper-2);
   }
 
+  /* Title left, count right, one hairline between. Sentence case, mid weight:
+     a heading, not an announcement. */
   .section-head {
-    max-width: 52ch;
-    margin-bottom: clamp(2.5rem, 6vw, 4rem);
+    @apply flex flex-wrap items-baseline justify-between;
+    gap: 0.5rem 1.5rem;
+    padding-bottom: 0.7rem;
+    border-bottom: 1px solid var(--color-ink);
   }
   .section-title {
-    font-size: clamp(1.9rem, 1.2rem + 2.6vw, 3rem);
-    letter-spacing: -0.028em;
+    font-size: clamp(1.4rem, 1.15rem + 0.95vw, 1.95rem);
+    font-weight: 600;
+    font-variation-settings: "wdth" 106;
+    letter-spacing: -0.022em;
   }
-  .section-title .lit {
-    color: var(--color-gold-deep);
+  .section-count {
+    @apply u-data tabular;
+    color: var(--color-ink-3);
   }
   .section-lede {
-    margin-top: 1rem;
-    color: var(--color-ink-soft);
-    font-size: clamp(1.02rem, 1rem + 0.3vw, 1.15rem);
-    max-width: 60ch;
+    margin-top: 1.2rem;
+    max-width: 64ch;
+    color: var(--color-ink-2);
+    font-size: clamp(0.99rem, 0.96rem + 0.26vw, 1.08rem);
   }
 
-  .sub-label {
-    @apply flex items-center;
-    gap: 0.7rem;
-    margin: clamp(2.2rem, 5vw, 3rem) 0 1.2rem;
-    font-family: var(--font-mono);
-    font-size: 0.82rem;
-    color: var(--color-ink-soft);
-  }
-  .sub-label::before {
-    content: "◆";
-    color: var(--color-gold);
-    font-size: 0.7rem;
-  }
+  /* ═══ THE AXIS ════════════════════════════════════════════════════════
+     The organising idea, made literal: one bar, two ends. Left is code that
+     exists because an experiment needed it; right is everything else. Width
+     is the real proportion, and each end is also the filter for its track.
 
-  /* ═══ SELECTED WORK — editorial index, not a card grid ════════════════ */
-  .work-group {
-    margin-top: clamp(2.4rem, 5vw, 3.4rem);
+     Colour encodes SELECTION and side, not rank — both ends are labelled, so
+     nobody has to read a fill to know what it is. */
+  .axis {
+    margin-top: clamp(1.75rem, 3.5vw, 2.5rem);
   }
-  .group-label {
-    @apply flex items-center;
-    gap: 0.8rem;
-    margin-bottom: 0.5rem;
-    font-family: var(--font-mono);
-    font-size: 0.82rem;
-    color: var(--color-ink-soft);
-  }
-  .group-label::before {
-    content: "◆";
-    color: var(--color-gold);
-    font-size: 0.7rem;
-  }
-  .group-label::after {
-    content: "";
-    @apply flex-1;
-    height: 1px;
-    background-color: var(--color-line);
-  }
-
-  .work-row {
-    @apply grid relative;
-    grid-template-columns: minmax(0, 7fr) minmax(0, 11fr);
-    gap: clamp(0.6rem, 3vw, 3rem);
-    padding: clamp(1.5rem, 3vw, 2.2rem) 0;
-    border-top: 1px solid var(--color-line);
-    transition: background 0.3s var(--ease-lens);
-  }
-  .work-row:last-child {
-    border-bottom: 1px solid var(--color-line);
-  }
-  /* the hover wash bleeds into the gutter, past the container padding */
-  .work-row::before {
-    content: "";
-    @apply absolute top-0 bottom-0 pointer-events-none;
-    left: calc(var(--spacing-gutter) * -1);
-    right: calc(var(--spacing-gutter) * -1);
-    background: color-mix(in oklch, var(--color-gold) 6%, transparent);
-    opacity: 0;
-    z-index: -1;
-    transition: opacity 0.3s var(--ease-lens);
-  }
-  .work-row:hover::before {
-    opacity: 1;
-  }
-  .work-row.is-flagship .work-name {
-    font-size: clamp(1.6rem, 1.2rem + 1.4vw, 2.3rem);
-  }
-
-  .work-head {
-    @apply flex flex-col;
-    gap: 0.7rem;
-  }
-  .work-name {
-    font-family: var(--font-display);
-    font-weight: 700;
-    font-size: clamp(1.35rem, 1.1rem + 1vw, 1.7rem);
-    letter-spacing: -0.02em;
-    line-height: 1.05;
-    transition: color 0.25s var(--ease-lens);
-  }
-  .work-row:hover .work-name {
-    color: var(--color-gold-deep);
-  }
-  .work-tagline {
-    font-weight: 600;
-    font-size: 1.08rem;
-    margin-bottom: 0.5rem;
-  }
-  .work-desc {
-    color: var(--color-ink-soft);
-  }
-
-  .badge {
-    @apply self-start;
-    font-family: var(--font-mono);
-    font-size: 0.66rem;
-    letter-spacing: 0.06em;
-    color: var(--color-ink-soft);
-    border: 1px solid var(--color-line);
+  .axis-bar {
+    @apply flex w-full items-stretch overflow-hidden;
+    gap: 2px; /* the surface gap that keeps adjacent fills readable */
+    background: var(--color-rule);
+    border: 1px solid var(--color-rule);
     border-radius: 2px;
-    padding: 0.12rem 0.5rem;
   }
-
-  .work-link {
-    @apply self-start inline-flex items-center;
-    gap: 0.35rem;
-    font-family: var(--font-mono);
-    font-size: 0.85rem;
-    color: var(--color-gold-deep);
+  .axis-seg {
+    @apply relative flex cursor-pointer items-center;
+    flex-grow: var(--seg-share, 1);
+    flex-basis: 0;
+    min-width: 5.5rem;
+    appearance: none;
+    text-align: left;
+    gap: 0.5rem;
+    padding: 0.62rem 0.75rem;
+    border: 0;
+    background: color-mix(in oklch, var(--color-ink) 8%, var(--color-paper));
+    color: var(--color-ink-2);
+    transition:
+      background 0.25s var(--ease-out-quart),
+      color 0.25s var(--ease-out-quart);
   }
-  .work-link .arr {
-    transition: transform 0.25s var(--ease-lens);
+  /* the research end carries the pen; the general end stays neutral */
+  .axis-seg.is-research {
+    background: var(--color-pen-tint);
+    color: var(--color-ink);
   }
-  .work-row:hover .work-link .arr {
-    transform: translate(3px, -3px);
+  .axis-seg:hover {
+    background: color-mix(in oklch, var(--color-ink) 18%, var(--color-paper));
+    color: var(--color-ink);
   }
-
-  /* dotted tech stack list */
-  .tech {
-    @apply flex flex-wrap list-none p-0;
-    gap: 0.4rem 0.5rem;
-    margin: 1rem 0 0;
+  .axis-seg.is-research:hover {
+    background: var(--color-pen-tint-2);
   }
-  .tech li {
-    font-family: var(--font-mono);
-    font-size: 0.73rem;
-    color: var(--color-ink-soft);
-    padding: 0.1rem 0;
+  .axis-seg[aria-pressed="true"] {
+    background: var(--color-ink);
+    color: var(--color-paper);
   }
-  .tech li::after {
-    content: "·";
-    margin-left: 0.5rem;
-    color: var(--color-line);
+  .axis-seg.is-research[aria-pressed="true"] {
+    background: var(--color-pen-slab);
+    color: var(--color-paper);
   }
-  .tech li:last-child::after {
-    content: "";
-  }
-
-  /* ═══ SKILLS — instrument legend ══════════════════════════════════════ */
-  .legend {
-    border-top: 1px solid var(--color-line);
-  }
-  .legend-row {
-    @apply grid items-baseline;
-    grid-template-columns: minmax(0, 5fr) minmax(0, 13fr);
-    gap: clamp(0.6rem, 3vw, 3rem);
-    padding: 1.4rem 0;
-    border-bottom: 1px solid var(--color-line);
-  }
-  .legend-name {
-    font-family: var(--font-display);
+  .axis-n {
+    @apply tabular;
+    font-variation-settings: "wdth" 88;
     font-weight: 700;
-    font-size: 1.05rem;
+    font-size: 0.95rem;
     letter-spacing: -0.01em;
   }
-  .legend-tags {
-    @apply flex flex-wrap list-none p-0 m-0;
-    gap: 0.45rem 0.7rem;
+  .axis-name {
+    @apply u-data truncate;
   }
-  .legend-tags li {
-    font-family: var(--font-mono);
-    font-size: 0.85rem;
+  .axis-foot {
+    @apply flex flex-wrap items-baseline justify-between;
+    gap: 0.4rem 1rem;
+    margin-top: 0.6rem;
+  }
+  .axis-caption {
+    @apply u-data-lc;
+    color: var(--color-ink-3);
+    max-width: 62ch;
+  }
+  .axis-reset {
+    @apply u-data cursor-pointer shrink-0;
+    color: var(--color-pen-ink);
+    background: none;
+    border: 0;
+    padding: 0;
+    border-bottom: 1px solid currentColor;
+  }
+
+  /* ═══ TRACKS & INDEX ══════════════════════════════════════════════════ */
+  .track {
+    margin-top: clamp(2rem, 4vw, 2.75rem);
+  }
+  .track-head {
+    @apply flex flex-wrap items-baseline justify-between;
+    gap: 0.35rem 1rem;
+    padding-bottom: 0.6rem;
+    border-bottom: 1px solid var(--color-ink);
+  }
+  .track-name {
+    @apply u-data inline-flex items-center gap-2;
     color: var(--color-ink);
   }
-  .legend-tags li::before {
-    content: "› ";
-    color: var(--color-gold);
-  }
-
-  /* ═══ RESEARCH ════════════════════════════════════════════════════════ */
-  .pub-list {
-    @apply grid list-none p-0;
-    gap: 1.2rem;
-    margin: 0 0 1.4rem;
-  }
-  .pub-item {
-    @apply grid items-baseline;
-    grid-template-columns: 3.6rem 1fr;
-    gap: 0 1.1rem;
-    padding-bottom: 1.2rem;
-    border-bottom: 1px solid var(--color-line-soft);
-  }
-  .pub-item:last-child {
-    border-bottom: 0;
-  }
-  .pub-year {
-    font-family: var(--font-mono);
-    font-size: 0.85rem;
-    color: var(--color-gold-deep);
-  }
-  .pub-title {
-    @apply block;
-    font-weight: 600;
-  }
-  .pub-venue {
-    @apply block italic;
-    color: var(--color-ink-soft);
-    font-size: 0.92rem;
-    margin-top: 0.15rem;
-  }
-
-  .tool-list {
-    @apply grid list-none p-0;
-    gap: 1.5rem;
-    margin: 1.2rem 0 0;
-  }
-  .tool-title {
-    font-family: var(--font-display);
-    font-weight: 700;
-    font-size: 1.05rem;
-    margin-bottom: 0.3rem;
-  }
-  .tool-item p {
-    color: var(--color-ink-soft);
-  }
-
-  .inline-link {
-    @apply inline-flex items-center;
-    gap: 0.3rem;
-    margin-top: 0.5rem;
-    font-family: var(--font-mono);
-    font-size: 0.85rem;
-    color: var(--color-gold-deep);
-    border-bottom: 1px solid transparent;
-    transition: border-color 0.2s var(--ease-lens);
-  }
-  .inline-link:hover {
-    border-bottom-color: var(--color-gold);
-  }
-
-  /* ═══ PUBLICATION CARDS — the metadata highlight grid ═════════════════
-     Rendered by `PublicationItemWithMetadata`. Cards sit on `.section-surface`
-     so `--color-paper` reads as raised, not as another slab of background. */
-  .pub-count {
-    @apply flex items-center;
-    gap: 0.7rem;
-    font-size: 0.8rem;
-    color: var(--color-ink-soft);
-    letter-spacing: 0.02em;
-    margin-bottom: 1.4rem;
-  }
-  .pub-count::before {
-    content: "◆";
-    color: var(--color-gold);
-    font-size: 0.7rem;
-  }
-
-  .pub-empty {
-    @apply italic;
-    color: var(--color-ink-soft);
-    padding: 2rem 0;
-    border-top: 1px solid var(--color-line);
-  }
-
-  .pubcard-grid {
-    @apply grid items-start;
-    grid-template-columns: repeat(auto-fill, minmax(min(100%, 20rem), 1fr));
-    gap: clamp(1rem, 2vw, 1.5rem);
-  }
-
-  .pubcard {
-    @apply relative flex flex-col h-full overflow-hidden;
-    gap: 0.75rem;
-    padding: clamp(1.25rem, 2.2vw, 1.75rem);
-    background-color: var(--color-paper);
-    border: 1px solid var(--color-line);
-    border-radius: 3px;
-    transition:
-      transform 0.35s var(--ease-lens),
-      border-color 0.35s var(--ease-lens),
-      box-shadow 0.35s var(--ease-lens);
-  }
-  /* the lensed edge — a gold hairline that resolves on hover */
-  .pubcard::before {
+  /* the same mark the axis uses, so a track and its end of the bar are
+     recognisably the same thing */
+  .track-name::before {
     content: "";
-    @apply absolute;
-    inset: 0 auto 0 0;
-    width: 2px;
-    background: linear-gradient(var(--color-gold-hot), var(--color-gold));
-    transform: scaleY(0);
-    transform-origin: top;
-    transition: transform 0.4s var(--ease-expo);
+    @apply inline-block shrink-0;
+    width: 0.5rem;
+    height: 0.5rem;
+    background: var(--color-rule-strong);
   }
-  .pubcard:hover {
-    transform: translateY(-3px);
-    border-color: color-mix(in oklch, var(--color-gold) 45%, var(--color-line));
-    box-shadow: 0 18px 40px -28px
-      color-mix(in oklch, var(--color-space) 60%, transparent);
+  .track.is-research .track-name::before {
+    background: var(--color-pen);
   }
-  .pubcard:hover::before,
-  .pubcard:focus-within::before {
-    transform: scaleY(1);
+  .track-note {
+    @apply u-data-lc;
+    color: var(--color-ink-3);
   }
 
-  /* the top-ranked entry takes the full row */
-  .pubcard.is-lead {
-    grid-column: 1 / -1;
+  .row {
+    @apply relative grid items-baseline;
+    grid-template-columns: minmax(0, 13rem) minmax(0, 1fr) minmax(0, 11.5rem);
+    gap: 0.3rem clamp(0.85rem, 2.5vw, 2.25rem);
+    padding: clamp(0.95rem, 1.8vw, 1.25rem) 0;
+    border-bottom: 1px solid var(--color-rule);
   }
-  .pubcard.is-lead .pubcard-title {
-    font-size: clamp(1.35rem, 1.05rem + 1.2vw, 1.9rem);
-  }
-  .pubcard.is-lead .pubcard-desc {
-    font-size: 1.02rem;
-  }
-
-  .pubcard-top {
-    @apply flex items-center flex-wrap uppercase;
-    gap: 0.5rem 0.7rem;
-    font-family: var(--font-mono);
-    font-size: 0.72rem;
-    letter-spacing: 0.06em;
-  }
-  .pubcard-kind {
-    color: var(--color-ink-soft);
-    border: 1px solid var(--color-line);
-    border-radius: 2px;
-    padding: 0.15rem 0.5rem;
-  }
-  .pubcard-flag {
-    color: var(--color-gold-deep);
-    background: color-mix(in oklch, var(--color-gold) 12%, transparent);
-    border: 1px solid color-mix(in oklch, var(--color-gold) 55%, transparent);
-    border-radius: 2px;
-    padding: 0.15rem 0.5rem;
-  }
-  .pubcard-year {
-    @apply ml-auto tabular-nums;
-    color: var(--color-ink-soft);
-  }
-
-  .pubcard-title {
-    font-family: var(--font-display);
-    font-weight: 700;
-    font-size: clamp(1.05rem, 0.98rem + 0.4vw, 1.2rem);
-    line-height: 1.18;
-    letter-spacing: -0.015em;
-  }
-  .pubcard-title a {
-    transition: color 0.25s var(--ease-lens);
-  }
-  .pubcard-title .arr {
-    @apply inline-block;
-    color: var(--color-gold-deep);
+  /* the hover wash bleeds past the container padding into the gutter */
+  .row::before {
+    content: "";
+    @apply pointer-events-none absolute inset-y-0;
+    left: calc(var(--spacing-gutter) * -0.5);
+    right: calc(var(--spacing-gutter) * -0.5);
+    background: color-mix(in oklch, var(--color-pen) 6%, transparent);
     opacity: 0;
-    transform: translate(-3px, 3px);
-    transition:
-      opacity 0.25s var(--ease-lens),
-      transform 0.25s var(--ease-lens);
+    z-index: -1;
+    transition: opacity 0.25s var(--ease-out-quart);
   }
-  .pubcard:hover .pubcard-title a {
-    color: var(--color-gold-deep);
-  }
-  .pubcard:hover .pubcard-title .arr {
+  .row:hover::before {
     opacity: 1;
-    transform: none;
+  }
+  /* An entry generated from the repository rather than written up: a name, one
+     sentence, a language. Tighter, so eighty of them read as an index rather
+     than as eighty half-empty full rows. */
+  .row.is-compact {
+    padding-block: clamp(0.6rem, 1.1vw, 0.8rem);
+  }
+  .row.is-compact .row-title {
+    font-weight: 500;
+  }
+  .row-title {
+    font-variation-settings: "wdth" 100;
+    font-weight: 600;
+    font-size: 1rem;
+    letter-spacing: -0.012em;
+    line-height: 1.28;
+  }
+  .row-title a {
+    @apply inline-flex items-start gap-1;
+    transition: color 0.2s var(--ease-out-quart);
+  }
+  .row-title .arr {
+    @apply inline-block;
+    font-size: 0.62em;
+    line-height: 1.6;
+    color: var(--color-ink-3);
+    transition: transform 0.25s var(--ease-out-quart);
+  }
+  .row:hover .row-title a {
+    color: var(--color-pen-ink);
+  }
+  .row:hover .row-title .arr {
+    transform: translate(2px, -2px);
+  }
+  .row-desc {
+    color: var(--color-ink-2);
+    font-size: 0.93rem;
+    line-height: 1.52;
+  }
+  /* the three curated highlights, inline — they used to only appear on the
+     promoted tiles, which is the feature that got cut */
+  .row-highlights {
+    @apply u-data-lc m-0 flex flex-wrap list-none p-0;
+    gap: 0 0.45rem;
+    margin-top: 0.4rem;
+    color: var(--color-ink-3);
+  }
+  .row-highlights li:not(:last-child)::after {
+    content: " ·";
+    color: var(--color-rule-strong);
   }
 
-  .pubcard-venue {
-    font-size: 0.92rem;
-    line-height: 1.45;
+  /* A deployed instance. The only place in a row that carries the pen, because
+     it is the only thing in a row you can actually go and use. */
+  .row-live {
+    @apply inline-flex flex-wrap items-baseline;
+    gap: 0 0.45rem;
+    margin-top: 0.55rem;
+    color: var(--color-pen-ink);
+    transition: color 0.2s var(--ease-out-quart);
   }
-  .pubcard-journal {
-    @apply italic;
+  .row-live-tag {
+    @apply u-data inline-flex items-center gap-1.5;
+  }
+  .row-live-tag::before {
+    content: "";
+    @apply inline-block shrink-0;
+    width: 0.42rem;
+    height: 0.42rem;
+    background: var(--color-pen);
+  }
+  .row-live-host {
+    @apply u-data-lc;
+    color: var(--color-ink-3);
+    overflow-wrap: anywhere;
+    border-bottom: 1px solid var(--color-rule);
+    transition:
+      color 0.2s var(--ease-out-quart),
+      border-color 0.2s var(--ease-out-quart);
+  }
+  .row-live:hover .row-live-host {
+    color: var(--color-pen-ink);
+    border-bottom-color: var(--color-pen);
+  }
+  .row-meta {
+    @apply flex flex-wrap items-baseline;
+    gap: 0.3rem 0.55rem;
+  }
+
+  .row-empty {
+    padding: clamp(2.5rem, 6vw, 4rem) 0;
+    color: var(--color-ink-2);
+    border-bottom: 1px solid var(--color-rule);
+  }
+
+  /* ═══ CHIPS ═══════════════════════════════════════════════════════════ */
+  .chip {
+    @apply u-data inline-flex items-center gap-1.5 whitespace-nowrap;
+    color: var(--color-ink-3);
+  }
+  .chip.is-lang {
     color: var(--color-ink);
+    font-weight: 700;
   }
-  .pubcard-locator {
-    @apply block;
-    font-family: var(--font-mono);
-    font-size: 0.76rem;
-    color: var(--color-ink-soft);
-    margin-top: 0.2rem;
+  .chip.is-topic {
+    color: var(--color-ink-3);
+    text-transform: none;
+    letter-spacing: 0.01em;
   }
-
-  .pubcard-desc {
-    color: var(--color-ink-soft);
-    font-size: 0.95rem;
-    line-height: 1.55;
+  .chip.is-topic::before {
+    content: "#";
+    color: var(--color-rule-strong);
   }
 
-  .pubcard-authors {
-    @apply flex flex-wrap list-none p-0 m-0;
-    gap: 0 0.35rem;
-    font-size: 0.85rem;
-    color: var(--color-ink-soft);
+  /* ═══ PAPERS — a catalogue under a year axis ══════════════════════════ */
+  .years {
+    margin-top: clamp(1.75rem, 3.5vw, 2.5rem);
   }
-  .pubcard-authors li:not(:last-child)::after {
-    content: ",";
+  .year-group {
+    @apply grid;
+    grid-template-columns: clamp(3.5rem, 8vw, 6rem) minmax(0, 1fr);
+    gap: 0 clamp(1rem, 3vw, 2.5rem);
+    padding-top: clamp(1.35rem, 2.8vw, 2rem);
+    border-top: 1px solid var(--color-ink);
   }
-  .pubcard-authors .is-self {
+  .year-group + .year-group {
+    margin-top: clamp(1.35rem, 2.8vw, 2rem);
+  }
+  /* a tick mark, not a headline */
+  .year-mark {
+    @apply tabular sticky self-start;
+    top: calc(var(--rail-h) + 1rem);
+    font-variation-settings: "wdth" 68;
+    font-weight: 600;
+    font-size: clamp(1.3rem, 1.05rem + 1.1vw, 1.85rem);
+    line-height: 1;
+    letter-spacing: 0;
+    color: var(--color-ink-2);
+  }
+  .year-mark span {
+    @apply u-data block;
+    color: var(--color-ink-3);
+    margin-top: 0.45rem;
+  }
+
+  .work-item {
+    @apply grid items-start;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 9.5rem);
+    gap: 0.75rem clamp(1.25rem, 3vw, 2.25rem);
+    padding-bottom: clamp(1.25rem, 2.4vw, 1.7rem);
+  }
+  .work-item + .work-item {
+    padding-top: clamp(1.25rem, 2.4vw, 1.7rem);
+    border-top: 1px solid var(--color-rule);
+  }
+  .work-main {
+    @apply min-w-0;
+  }
+  .work-margin {
+    @apply flex min-w-0 flex-col items-start;
+    gap: 0.4rem;
+  }
+  .work-title {
+    font-variation-settings: "wdth" 100;
+    font-weight: 600;
+    font-size: clamp(1.02rem, 0.98rem + 0.35vw, 1.18rem);
+    letter-spacing: -0.014em;
+    line-height: 1.3;
+    max-width: 52ch;
+  }
+  .work-title a {
+    @apply inline;
+    background-image: linear-gradient(currentColor, currentColor);
+    background-size: 0% 1px;
+    background-position: 0 100%;
+    background-repeat: no-repeat;
+    transition:
+      background-size 0.35s var(--ease-out-quart),
+      color 0.2s var(--ease-out-quart);
+  }
+  .work-title a:hover {
+    color: var(--color-pen-ink);
+    background-size: 100% 1px;
+  }
+  .work-venue {
+    margin-top: 0.45rem;
+    font-size: 0.93rem;
+    color: var(--color-ink-2);
+  }
+  .work-venue b {
     @apply font-semibold;
     color: var(--color-ink);
   }
-  .pubcard-authors .is-more {
-    font-family: var(--font-mono);
-    font-size: 0.76rem;
-    color: color-mix(in oklch, var(--color-ink-soft) 70%, transparent);
+  .work-authors {
+    @apply u-data-lc m-0 flex flex-wrap list-none p-0;
+    gap: 0 0.3rem;
+    margin-top: 0.5rem;
+    color: var(--color-ink-3);
   }
-
-  .pubcard-tags {
-    @apply flex flex-wrap list-none p-0 m-0;
-    gap: 0.35rem;
+  .work-authors li:not(:last-child)::after {
+    content: ",";
   }
-  .pub-tag {
-    font-family: var(--font-mono);
-    font-size: 0.7rem;
-    letter-spacing: 0.02em;
-    color: var(--color-ink-soft);
-    background-color: var(--color-surface);
-    border: 1px solid var(--color-line-soft);
-    border-radius: 999px;
-    padding: 0.1rem 0.55rem;
+  .work-authors .is-self {
+    color: var(--color-ink);
+    font-weight: 700;
   }
-
-  /* `mt-auto` pins the footer to the bottom, so cards in a row line up */
-  .pubcard-foot {
-    @apply flex flex-wrap items-center mt-auto;
-    gap: 0.45rem 0.9rem;
-    padding-top: 0.9rem;
-    border-top: 1px solid var(--color-line-soft);
-    font-family: var(--font-mono);
-    font-size: 0.76rem;
-    color: var(--color-ink-soft);
+  .work-abstract {
+    margin-top: 0.65rem;
+    max-width: 66ch;
+    font-size: 0.93rem;
+    line-height: 1.55;
+    color: var(--color-ink-2);
   }
-  .pubcard-metric-value {
-    @apply font-semibold tabular-nums;
-    color: var(--color-gold-deep);
+  .work-foot {
+    @apply flex flex-wrap items-center;
+    gap: 0.35rem 0.9rem;
+    margin-top: 0.8rem;
   }
-  .pubcard-role {
-    @apply lowercase;
+  /* set inline and small. A citation count rendered as a 2rem figure is the
+     single most self-congratulatory element a bibliography can have. */
+  .work-cites {
+    @apply u-data-lc tabular;
+    color: var(--color-ink-3);
   }
-  .pubcard-role::before {
-    content: "· ";
-    color: var(--color-line);
+  .work-cites b {
+    @apply font-semibold;
+    color: var(--color-ink-2);
   }
-  .pubcard-link {
-    color: var(--color-ink-soft);
-    border-bottom: 1px solid transparent;
+  .work-link {
+    @apply u-data-lc;
+    color: var(--color-ink-3);
     overflow-wrap: anywhere;
+    border-bottom: 1px solid var(--color-rule);
     transition:
-      color 0.2s var(--ease-lens),
-      border-color 0.2s var(--ease-lens);
+      color 0.2s var(--ease-out-quart),
+      border-color 0.2s var(--ease-out-quart);
   }
-  .pubcard-link:hover {
-    color: var(--color-gold-deep);
-    border-bottom-color: var(--color-gold);
-  }
-  .pubcard-link.is-open {
-    @apply ml-auto;
-    color: var(--color-gold-deep);
+  .work-link:hover {
+    color: var(--color-pen-ink);
+    border-bottom-color: var(--color-pen);
   }
 
-  /* ── loading placeholders ─────────────────────────────────────────────── */
-  .pubcard.is-skeleton {
-    gap: 0.9rem;
-    min-height: 12rem;
+  /* ═══ TOOLS ═══════════════════════════════════════════════════════════ */
+  .kit {
+    margin-top: clamp(1.75rem, 3.5vw, 2.5rem);
+    border-top: 1px solid var(--color-ink);
   }
-  .pubcard.is-skeleton:hover {
-    transform: none;
-    box-shadow: none;
-    border-color: var(--color-line);
+  .kit-row {
+    @apply grid items-baseline;
+    grid-template-columns: minmax(0, 10rem) minmax(0, 1fr);
+    gap: 0.4rem clamp(1rem, 3vw, 2.5rem);
+    padding: clamp(0.85rem, 1.6vw, 1.15rem) 0;
+    border-bottom: 1px solid var(--color-rule);
   }
-  .skeleton-line {
-    @apply block;
-    height: 0.7rem;
-    border-radius: 2px;
-    background: linear-gradient(
-      90deg,
-      var(--color-surface) 0%,
-      var(--color-line-soft) 50%,
-      var(--color-surface) 100%
+  .kit-name {
+    @apply u-data;
+    color: var(--color-ink-2);
+  }
+  .kit-items {
+    @apply m-0 flex flex-wrap list-none p-0;
+    gap: 0.3rem 1.05rem;
+  }
+  .kit-items li {
+    font-variation-settings: "wdth" 92;
+    font-weight: 400;
+    font-size: 0.93rem;
+    color: var(--color-ink);
+  }
+
+  /* ═══ CLOSING — the one saturated surface ═════════════════════════════ */
+  .closing {
+    @apply relative isolate overflow-hidden;
+    background: var(--color-deep);
+    color: var(--color-on-deep);
+    padding-block: clamp(3.5rem, 9vh, 6rem);
+  }
+  .closing::before {
+    content: "";
+    @apply pointer-events-none absolute inset-0;
+    background-image: repeating-linear-gradient(
+      to bottom,
+      oklch(1 0 0 / 0.05) 0 1px,
+      transparent 1px 3.25rem
     );
-    background-size: 200% 100%;
-    animation: shimmer 1.6s linear infinite;
+    z-index: -1;
   }
-  .skeleton-line.is-30 {
-    width: 30%;
+  .closing .section-head {
+    border-bottom-color: var(--color-on-deep);
   }
-  .skeleton-line.is-50 {
-    width: 50%;
-  }
-  .skeleton-line.is-70 {
-    width: 70%;
-  }
-  .skeleton-line.is-90 {
-    width: 90%;
-    height: 1.1rem;
+  .closing .section-count,
+  .closing .section-lede {
+    color: var(--color-on-deep-2);
   }
 
-  /* ═══ CONTACT — back into the field (dark) ════════════════════════════
-     Must stay after .section-* so `.contact-title .lit` beats
-     `.section-title .lit` (same specificity, source order decides). */
-  .contact {
-    @apply relative overflow-hidden isolate;
-    background: radial-gradient(
-      120% 120% at 30% 0%,
-      var(--color-space) 0%,
-      var(--color-space-2) 80%
-    );
-    color: var(--color-on-space);
+  .contact-list {
+    @apply m-0 grid list-none p-0;
+    margin-top: clamp(1.75rem, 4vw, 2.5rem);
+    border-top: 1px solid var(--color-deep-rule);
   }
-  .contact .section-lede {
-    color: var(--color-on-space-soft);
+  .contact-list li {
+    border-bottom: 1px solid var(--color-deep-rule);
   }
-  .contact-title {
-    font-size: clamp(2.4rem, 1.5rem + 4vw, 4.5rem);
-    letter-spacing: -0.03em;
-  }
-  .contact-title .lit {
-    color: var(--color-gold-hot);
-  }
-
-  .contact-links {
-    @apply grid list-none p-0;
-    gap: 0;
-    margin: clamp(2.5rem, 6vw, 4rem) 0 0;
-    max-width: 720px;
-  }
-  .contact-links li {
-    border-top: 1px solid var(--color-space-line);
-  }
-  .contact-links li:last-child {
-    border-bottom: 1px solid var(--color-space-line);
-  }
-  .contact-links a {
-    @apply grid items-center;
-    grid-template-columns: 8rem 1fr auto;
-    gap: 1rem;
-    padding: 1.4rem 0.4rem;
+  .contact-list a {
+    @apply grid items-baseline;
+    grid-template-columns: clamp(5rem, 12vw, 7.5rem) minmax(0, 1fr) auto;
+    gap: 0.35rem 1.25rem;
+    padding: clamp(0.85rem, 2vw, 1.15rem) 0;
     transition:
-      padding 0.3s var(--ease-lens),
-      color 0.3s var(--ease-lens);
+      color 0.25s var(--ease-out-quart),
+      padding-left 0.3s var(--ease-out-quart);
   }
-  /* the row slides right as it lights up */
-  .contact-links a:hover {
-    padding-inline: 1.2rem 0.4rem;
-    color: var(--color-gold);
+  .contact-list a:hover {
+    color: var(--color-pen-lit);
+    padding-left: 0.7rem;
   }
   .contact-key {
-    font-family: var(--font-mono);
-    font-size: 0.8rem;
-    color: var(--color-on-space-soft);
+    @apply u-data;
+    color: var(--color-on-deep-2);
+    transition: color 0.25s var(--ease-out-quart);
+  }
+  .contact-list a:hover .contact-key {
+    color: inherit;
   }
   .contact-val {
     @apply min-w-0;
-    font-family: var(--font-display);
-    font-weight: 700;
-    font-size: clamp(1.05rem, 0.9rem + 0.9vw, 1.45rem);
+    font-variation-settings: "wdth" 100;
+    font-weight: 600;
+    font-size: clamp(1rem, 0.92rem + 0.5vw, 1.2rem);
+    letter-spacing: -0.014em;
     overflow-wrap: anywhere;
   }
   .contact-arr {
-    color: var(--color-gold);
-    transition: transform 0.25s var(--ease-lens);
+    color: var(--color-pen-lit);
+    transition: transform 0.25s var(--ease-out-quart);
   }
-  .contact-links a:hover .contact-arr {
-    transform: translate(4px, -4px);
+  .contact-list a:hover .contact-arr {
+    transform: translate(3px, -3px);
   }
 
-  /* ═══ FOOTER ══════════════════════════════════════════════════════════ */
   .site-footer {
-    background-color: var(--color-space-2);
-    color: var(--color-on-space-soft);
-    padding-block: 2.5rem;
-    border-top: 1px solid var(--color-space-line);
+    background: var(--color-deep-2);
+    color: var(--color-on-deep-2);
+    padding-block: 1.6rem;
+    border-top: 1px solid var(--color-deep-rule);
   }
   .footer-inner {
-    @apply flex justify-between flex-wrap;
-    gap: 0.5rem;
-    font-family: var(--font-mono);
-    font-size: 0.8rem;
+    @apply u-data-lc flex flex-wrap items-center justify-between;
+    gap: 0.5rem 1.5rem;
+  }
+  .footer-inner a:hover {
+    color: var(--color-pen-lit);
   }
 
-  /* ═══ SURFACES & DATA WIDGETS ═════════════════════════════════════════ */
-  .card {
-    @apply rounded-lg p-5;
-    background-color: var(--color-surface);
-    border: 1px solid var(--color-line);
+  /* ═══ STATE: loading, empty, error ════════════════════════════════════ */
+  .skeleton {
+    @apply grid;
+    gap: 1px;
+    margin-top: clamp(1.75rem, 3.5vw, 2.5rem);
+    background: var(--color-rule);
+    border-block: 1px solid var(--color-rule);
+  }
+  .skeleton span {
+    @apply block;
+    height: 4rem;
+    background: linear-gradient(
+      100deg,
+      var(--color-paper) 30%,
+      var(--color-paper-2) 50%,
+      var(--color-paper) 70%
+    );
+    background-size: 250% 100%;
+    animation: sweep 1.5s linear infinite;
+  }
+  .section-band .skeleton span {
+    background: linear-gradient(
+      100deg,
+      var(--color-paper-2) 30%,
+      var(--color-paper) 50%,
+      var(--color-paper-2) 70%
+    );
+    background-size: 250% 100%;
   }
 
-  .data-table {
-    @apply w-full text-sm;
-    border-collapse: collapse;
-  }
-  .data-table th {
-    @apply px-3 py-2 text-left align-bottom text-xs font-semibold uppercase tracking-wide;
-    color: var(--color-muted);
-    border-bottom: 1px solid var(--color-line);
-  }
-  .data-table td {
-    @apply px-3 py-2 align-top;
-    border-bottom: 1px solid var(--color-line);
-  }
-  .data-table tr:last-child td {
-    border-bottom: 0;
-  }
-  /* long DOIs / URLs must not blow out the layout */
-  .data-table td:last-child {
-    @apply break-all;
-  }
-
-  /* a table that scrolls instead of overflowing the page */
-  .table-wrap {
-    @apply w-full overflow-x-auto;
-  }
-
-  .muted {
-    @apply text-sm;
-    color: var(--color-muted);
-  }
   .notice {
-    @apply rounded-md px-3 py-2 text-sm;
-    background-color: var(--color-surface);
-    border: 1px solid var(--color-line);
+    @apply u-data-lc;
+    margin-top: 2rem;
+    padding: 0.85rem 1.05rem;
+    background: var(--color-paper-2);
+    border: 1px solid var(--color-rule);
+    border-radius: 1px;
+    color: var(--color-ink-2);
   }
   .notice-error {
-    color: oklch(0.45 0.16 25);
-    background-color: oklch(0.96 0.02 25);
-    border-color: oklch(0.86 0.06 25);
+    color: var(--color-pen-ink);
+    border-color: var(--color-pen-tint-2);
+    background: var(--color-pen-wash);
   }
 
   /* ═══ RESPONSIVE ══════════════════════════════════════════════════════ */
-  @media (max-width: 720px) {
-    .brand-name {
-      display: none;
+  @media (max-width: 900px) {
+    .row {
+      grid-template-columns: minmax(0, 1fr);
+      gap: 0.45rem;
     }
-    .work-row {
-      grid-template-columns: 1fr;
-      gap: 1rem;
+    .row-meta {
+      margin-top: 0.1rem;
     }
-    .legend-row {
-      grid-template-columns: 1fr;
-      gap: 0.6rem;
+    .work-item {
+      grid-template-columns: minmax(0, 1fr);
+      gap: 0.75rem;
     }
-    .contact-links a {
-      grid-template-columns: 6rem 1fr auto;
+    .work-margin {
+      @apply flex-row flex-wrap items-baseline;
+      gap: 0.4rem 1rem;
     }
-    .hero-inner {
-      padding-block: 7rem 5rem;
+  }
+
+  @media (max-width: 760px) {
+    :root {
+      --rail-h: 3rem;
+    }
+    .rail-brand .name {
+      @apply hidden;
+    }
+    .masthead-grid {
+      grid-template-columns: minmax(0, 1fr);
+      gap: 1.75rem;
+    }
+    /* portrait leads on narrow screens, capped so it never eats the fold */
+    .masthead-figure {
+      @apply order-first;
+      max-width: 9.5rem;
+    }
+    .year-group {
+      grid-template-columns: minmax(0, 1fr);
+      gap: 0.75rem;
+    }
+    .year-mark {
+      @apply static flex items-baseline gap-2.5;
+      font-size: 1.45rem;
+    }
+    .year-mark span {
+      margin-top: 0;
+    }
+    .kit-row {
+      grid-template-columns: minmax(0, 1fr);
+      gap: 0.4rem;
+    }
+    .contact-list a {
+      grid-template-columns: minmax(0, 1fr) auto;
+    }
+    .contact-key {
+      grid-column: 1 / -1;
+    }
+    .axis-seg {
+      @apply flex-col items-start justify-center;
+      min-width: 4.5rem;
+      gap: 0.15rem;
+      padding: 0.5rem 0.55rem;
     }
   }
 }
 
 /* ---------------------------------------------------------------------------
-   The page shell. Extends Tailwind's core `container` utility so it lands in
+   The page shell. Extends Tailwind's core `container` so it lands in
    @layer utilities alongside it — and after it, which is what makes the fixed
-   1120px max-width beat the core utility's breakpoint ladder.
+   max-width beat the core utility's breakpoint ladder.
 --------------------------------------------------------------------------- */
 @utility container {
   width: 100%;
@@ -1094,8 +1080,17 @@
   padding-inline: var(--spacing-gutter);
 }
 
-/* the loading placeholders sweep a light band across themselves */
-@keyframes shimmer {
+/* ═══ MOTION ═══════════════════════════════════════════════════════════════
+   Two mechanisms, both safe by construction:
+
+   1. `.lift-*` runs once on load. It is a plain @keyframes, so it always
+      fires — nothing waits on an observer that may never be attached.
+   2. `[data-reveal]` uses a scroll-driven view() timeline behind @supports.
+      Content is fully visible by default; only browsers that can actually
+      run the timeline opt into the hidden start state. A headless renderer,
+      a background tab or an unsupporting browser shows the finished page.
+--------------------------------------------------------------------------- */
+@keyframes sweep {
   from {
     background-position: 200% 0;
   }
@@ -1104,36 +1099,81 @@
   }
 }
 
-@keyframes scrollpulse {
-  0%,
-  100% {
-    opacity: 0.3;
-    transform: scaleY(0.6);
-    transform-origin: top;
+@keyframes lift {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
   }
-  50% {
+  to {
     opacity: 1;
-    transform: scaleY(1);
+    transform: none;
   }
 }
 
-/* ═══ MOTION PREFERENCES ═══════════════════════════════════════════════════ */
+@keyframes draw-in {
+  from {
+    opacity: 0;
+    clip-path: inset(0 100% 0 0);
+  }
+  to {
+    opacity: 1;
+    clip-path: inset(0 0 0 0);
+  }
+}
+
+.lift-1,
+.lift-2,
+.lift-3,
+.lift-4 {
+  animation: lift 0.7s var(--ease-out-expo) backwards;
+}
+.lift-1 {
+  animation-delay: 0.03s;
+}
+.lift-2 {
+  animation-delay: 0.1s;
+}
+.lift-3 {
+  animation-delay: 0.17s;
+}
+.lift-4 {
+  animation-delay: 0.24s;
+}
+
+/* the portrait resolves left to right, like a plotter pass */
+.draw-in {
+  animation: draw-in 0.95s var(--ease-out-expo) 0.15s backwards;
+}
+
+@supports (animation-timeline: view()) {
+  @media (prefers-reduced-motion: no-preference) {
+    [data-reveal] {
+      animation: lift linear both;
+      animation-timeline: view();
+      animation-range: entry 5% cover 20%;
+    }
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   html {
     scroll-behavior: auto;
   }
-  .js [data-reveal] {
-    opacity: 1;
-    transform: none;
-    transition: none;
+  .skeleton span {
+    animation: none;
   }
-  .hero-scroll::after {
+  .lift-1,
+  .lift-2,
+  .lift-3,
+  .lift-4,
+  .draw-in {
     animation: none;
   }
   *,
   *::before,
   *::after {
     animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
     transition-duration: 0.001ms !important;
   }
 }
