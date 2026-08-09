@@ -130,9 +130,11 @@ fn select_highlights(
     items
 }
 
-/// One entry of the author line: either a name, or a collapsed run of names.
+/// One entry of the author line: a name, a jump over the middle of the list, or
+/// a count of the names left off the end.
 enum AuthorChunk {
     Name { name: String, is_site_author: bool },
+    Gap,
     More(usize),
 }
 
@@ -156,7 +158,7 @@ fn author_chunks(authors: &[String]) -> Vec<AuthorChunk> {
         Some(index) if index >= MAX_AUTHORS => {
             let head = MAX_AUTHORS - 1;
             let mut chunks: Vec<AuthorChunk> = authors[..head].iter().map(name_chunk).collect();
-            chunks.push(AuthorChunk::More(index - head));
+            chunks.push(AuthorChunk::Gap);
             chunks.push(name_chunk(&authors[index]));
             let tail = authors.len() - index - 1;
             if tail > 0 {
@@ -312,7 +314,8 @@ pub fn PublicationItemWithMetadata(
     let year = metadata.year.unwrap_or(publication.year as i64);
     let featured = metadata.featured.unwrap_or(false);
     let kind = metadata.type_.as_deref().map(humanize);
-    let role = metadata.role.as_deref().map(humanize);
+    // Left as-is ("co-author", "first-author") — the hyphen reads better in mono.
+    let role = metadata.role.as_deref().and_then(non_empty);
 
     let doi = metadata
         .identifiers
@@ -394,8 +397,11 @@ pub fn PublicationItemWithMetadata(
                         };
                         view! { <li class=class>{name}</li> }.into_any()
                     }
+                    AuthorChunk::Gap => {
+                        view! { <li class="pub-author is-more">"…"</li> }.into_any()
+                    }
                     AuthorChunk::More(count) => {
-                        view! { <li class="pub-author is-more">{format!("+{count}")}</li> }
+                        view! { <li class="pub-author is-more">{format!("+{count} more")}</li> }
                             .into_any()
                     }
                 })
@@ -428,8 +434,11 @@ pub fn PublicationItemWithMetadata(
         "pubcard"
     };
 
+    // No `data-reveal` here: interactions.js snapshots those elements once at
+    // load, and these cards only exist after the Suspense payload streams in —
+    // they would never be observed, and would stay at opacity 0 forever.
     view! {
-        <article class=card_class data-reveal="">
+        <article class=card_class>
             <header class="pubcard-top">
                 {kind.map(|kind| view! { <span class="pubcard-kind">{kind}</span> })}
                 {featured

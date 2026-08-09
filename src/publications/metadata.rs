@@ -65,7 +65,7 @@ pub struct PublicationMetadataDto {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct MetadataTableDto {
+pub struct PublicationMetadataTableDto {
     pub author: RootStructAuthor,
     #[serde(rename = "retrievedAt")]
     pub retrieved_at: String,

@@ -30,6 +30,7 @@ async fn main() -> std::io::Result<()> {
             // serve other assets from the `assets` directory
             .service(Files::new("/assets", &site_root))
             .service(Files::new("/fonts", format!("{}/fonts", &site_root)))
+            .service(Files::new("/js", format!("{}/js", &site_root)))
             // serve the favicon from /favicon.ico
             .service(favicon)
             .leptos_routes(routes, {

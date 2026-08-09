@@ -3,7 +3,7 @@ use std::todo;
 
 use crate::publications;
 use crate::publications::dto::PublicationItemWithMetadataDto;
-use crate::publications::metadata::MetadataTableDto;
+use crate::publications::metadata::PublicationMetadataTableDto;
 use crate::publications::model::PublicationItem;
 use crate::publications::{dto::PublicationItemDto, repository::PublicationsRepository};
 use anyhow::Context;
@@ -64,7 +64,7 @@ impl PublicationsService {
             .collect();
         Ok(publications_type)
     }
-    async fn get_metadata(&self) -> anyhow::Result<MetadataTableDto> {
+    async fn get_metadata(&self) -> anyhow::Result<PublicationMetadataTableDto> {
         let response = reqwest::get(PUBLICATION_METADATA_URL)
             .await
             .context("Error requesting metadata")?

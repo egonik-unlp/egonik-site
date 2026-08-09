@@ -1,4 +1,4 @@
-use crate::publications::metadata::{MetadataTableDto, PublicationMetadataDto};
+use crate::publications::metadata::{PublicationMetadataDto, PublicationMetadataTableDto};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -22,23 +22,6 @@ impl PublicationItemWithMetadataDto {
             publication,
             metadata,
         }
-    }
-}
-impl PartialEq<PublicationItemDto> for PublicationMetadataDto {
-    fn eq(&self, other: &PublicationItemDto) -> bool {
-        self.title
-            .clone()
-            .map(|inner| inner.to_lowercase())
-            .unwrap_or("".to_string())
-            .eq(&other.title.to_lowercase())
-    }
-
-    fn ne(&self, other: &PublicationItemDto) -> bool {
-        self.title
-            .clone()
-            .map(|inner| inner.to_lowercase())
-            .unwrap_or("".to_string())
-            .ne(&other.title.to_lowercase())
     }
 }
 
@@ -111,7 +94,13 @@ mod tests {
     use super::*;
 
     fn publication(title: &str) -> PublicationItemDto {
-        PublicationItemDto::new(title.into(), String::new(), 2022, String::new(), String::new())
+        PublicationItemDto::new(
+            title.into(),
+            String::new(),
+            2022,
+            String::new(),
+            String::new(),
+        )
     }
 
     fn metadata(title: &str) -> PublicationMetadataDto {
@@ -163,8 +152,10 @@ mod tests {
 
     #[test]
     fn rejects_a_short_incidental_overlap() {
-        assert!(!publication("Silicon nanoparticles").is_its_metadata(&metadata(
-            "Silicon nanoparticles for biological imaging applications"
-        )));
+        assert!(
+            !publication("Silicon nanoparticles").is_its_metadata(&metadata(
+                "Silicon nanoparticles for biological imaging applications"
+            ))
+        );
     }
 }

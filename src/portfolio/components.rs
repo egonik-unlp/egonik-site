@@ -7,6 +7,7 @@ use leptos::svg::view;
 
 use crate::portfolio::dto::PortfolioItemDto;
 use crate::portfolio::server::get_all_portfolio_items;
+use crate::portfolio::server::get_all_portfolio_items_with_metadata;
 
 #[component]
 pub fn GithubRepoLoader(count: RwSignal<i32>) -> impl IntoView {
@@ -85,5 +86,20 @@ fn GithubRepoComponent(portfolio_items: Vec<PortfolioItemDto>) -> impl IntoView 
                 </tbody>
             </table>
         </div>
+    }
+}
+
+#[component]
+fn GithubComponentWithMetadata() -> impl IntoView {
+    let resource = Resource::new(
+        || (),
+        async move |_| get_all_portfolio_items_with_metadata().await,
+    );
+    view! {
+        <ErrorBoundary fallback=move| errors | view! {<p> format!("Error durante carga {errors:?}")   </p>} >
+            <Suspense fallback=|| view! { <p> "Loading"  </p> } >
+                { move|| resource.and_then(|items|  items  )  }
+            </Suspense>
+        </ErrorBoundary>
     }
 }

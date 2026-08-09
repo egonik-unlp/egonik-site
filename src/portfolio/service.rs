@@ -1,5 +1,8 @@
+use std::todo;
+
 use crate::portfolio::{
-    dto::PortfolioItemDto,
+    dto::{PortfolioItemDto, PortfolioItemWithMetadataDto},
+    metadata::ProjectMetadataTableDto,
     model::{PortfolioItemRow, TagRow},
     repository::{PortfolioItemsRepository, PortfolioTuple},
 };
@@ -13,6 +16,7 @@ use reqwest::header::{ACCEPT, USER_AGENT};
 use serde::{Deserialize, Serialize};
 
 const GITHUB_ACCOUT: &str = "egonik-unlp";
+const PROJECT_METADATA_URL: &str = "https://egonik-unlp.github.io/assets/data/projects.json";
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct GithubRepo {
@@ -102,8 +106,41 @@ impl PortfolioService {
 
         Ok(())
     }
-
-    pub async fn get_all(mut self) -> anyhow::Result<Vec<PortfolioItemDto>> {
-        self.repo.get_all().await
+    async fn get_metadata(&self) -> anyhow::Result<ProjectMetadataTableDto> {
+        let response = reqwest::get(PROJECT_METADATA_URL)
+            .await
+            .context("Error fetching portfolio metadata")?
+            .text()
+            .await
+            .context("Error getting response body")?;
+        serde_json::from_str(&response).context("Error serializing metadata")
+    }
+    pub async fn get_all_with_metadata(&self) -> anyhow::Result<Vec<PortfolioItemWithMetadataDto>> {
+        let metadata = self
+            .get_metadata()
+            .await
+            .context("Error getting metadata")?;
+        let projects = self
+            .get_all()
+            .await
+            .context("Error getting projects from db")?;
+        let projects_with_metadata = projects
+            .into_iter()
+            .filter_map(|project| {
+                metadata
+                    .clone()
+                    .repositories
+                    .into_iter()
+                    .map(|(name, project_metadata)| project_metadata.clone())
+                    .find(|project_metadata| project.is_its_metadata(project_metadata))
+                    .map(|project_metadata| {
+                        PortfolioItemWithMetadataDto::new(project, project_metadata)
+                    })
+            })
+            .collect();
+        Ok(projects_with_metadata)
+    }
+    pub async fn get_all(&self) -> anyhow::Result<Vec<PortfolioItemDto>> {
+        self.repo.clone().get_all().await
     }
 }
