@@ -6,6 +6,8 @@ use crate::portfolio::server::{get_all_portfolio_items, get_all_portfolio_items_
 
 /// Topics printed per row before the list is cut.
 const MAX_TOPICS: usize = 2;
+/// Bucket for a project whose metadata records no language at all.
+const NO_LANGUAGE: &str = "Unspecified";
 
 /// Word stems that mark a project's subject matter as laboratory science.
 ///
@@ -56,6 +58,27 @@ const RESEARCH_STEMS: &[&str] = &[
     "fluid-dynamic",
 ];
 
+/// Deployed instances, keyed by GitHub repository name.
+///
+/// The published `projects.json` carries these under `links.demo`, but
+/// `ProjectMetadataDto` has no `links` field, so serde drops the object before it
+/// reaches the UI. Adding that field is a small change to
+/// `src/portfolio/metadata.rs`; until then the URLs live here, and this table has
+/// to be kept in step by hand.
+///
+/// Both were requested before shipping — a badge reading "Live" that lands on a
+/// 404 is worse than no badge. The first deliberately disagrees with the
+/// published `links.demo`, which points at `convert-ffi.onrender.com` and returns
+/// 404; the running deployment is `convert-ffi-latest`. See UI_REQUIREMENTS.md §9
+/// for that correction and for why `spotify-next-track` cannot render yet.
+const LIVE_APPS: &[(&str, &str)] = &[
+    ("convert-ffi", "https://convert-ffi-latest.onrender.com/"),
+    (
+        "spotify-next-track",
+        "https://infinite-playlist.eduardo-gonik.workers.dev/",
+    ),
+];
+
 /// "systems-programming" -> "Systems Programming"
 fn display_name(value: &str) -> String {
     value
@@ -75,6 +98,26 @@ fn display_name(value: &str) -> String {
 fn non_empty(value: &str) -> Option<String> {
     let trimmed = value.trim();
     (!trimmed.is_empty()).then(|| trimmed.to_owned())
+}
+
+/// The deployed URL for a repository, if there is one.
+///
+/// Matched case-insensitively against the *repository* name, not the display
+/// title: `metadata.title` renames `app` to "Pathfinder", so a lookup after the
+/// fallback chain would miss every renamed project.
+fn live_url(repo_name: &str) -> Option<&'static str> {
+    LIVE_APPS
+        .iter()
+        .find(|(name, _)| name.eq_ignore_ascii_case(repo_name))
+        .map(|(_, url)| *url)
+}
+
+/// "https://convert-ffi.onrender.com/" -> "convert-ffi.onrender.com"
+fn display_host(url: &str) -> String {
+    url.trim_start_matches("https://")
+        .trim_start_matches("http://")
+        .trim_end_matches('/')
+        .to_owned()
 }
 
 /// Subjects for one project, broadest first, de-duplicated across the two
@@ -116,11 +159,10 @@ fn is_research(repo_name: &str, metadata: &ProjectMetadataDto) -> bool {
 
 /// Whether an entry was written up by hand or generated from the repository.
 ///
-/// `categories` is the discriminator: it is present on all 22 curated entries in
-/// `projects.json` and on none of the 82 generated ones. Generated entries have
-/// a name, a one-line description and a language — enough for an index row, not
-/// enough for a full one — so the row renders tighter rather than leaving a
-/// documented-shaped gap where the missing fields would go.
+/// `categories` is the discriminator: present on every curated entry in
+/// `projects.json` and on none of the generated ones. Generated entries have a
+/// name, a one-line description and a language — enough for an index row, not
+/// enough for a full one.
 fn is_documented(metadata: &ProjectMetadataDto) -> bool {
     metadata
         .categories
@@ -128,58 +170,17 @@ fn is_documented(metadata: &ProjectMetadataDto) -> bool {
         .is_some_and(|categories| !categories.is_empty())
 }
 
-/// Deployed instances, keyed by GitHub repository name.
-///
-/// The published `projects.json` carries these under `links.demo`, but
-/// `ProjectMetadataDto` has no `links` field, so serde drops the object before it
-/// reaches the UI. Adding that field is a small change to
-/// `src/portfolio/metadata.rs`; until then the URLs live here, and this table has
-/// to be kept in step by hand.
-///
-/// Both were requested before shipping — a badge reading "Live" that lands on a
-/// 404 is worse than no badge. The first deliberately disagrees with the
-/// published `links.demo`, which points at `convert-ffi.onrender.com` and returns
-/// 404; the running deployment is `convert-ffi-latest`. See UI_REQUIREMENTS.md §9
-/// for that correction and for why `spotify-next-track` cannot render yet.
-const LIVE_APPS: &[(&str, &str)] = &[
-    ("convert-ffi", "https://convert-ffi-latest.onrender.com/"),
-    (
-        "spotify-next-track",
-        "https://infinite-playlist.eduardo-gonik.workers.dev/",
-    ),
-];
-
-/// The deployed URL for a repository, if there is one.
-///
-/// Matched case-insensitively against the *repository* name, not the display
-/// title: `metadata.title` renames `app` to "Pathfinder", so a lookup after the
-/// fallback chain would miss every renamed project.
-fn live_url(repo_name: &str) -> Option<&'static str> {
-    LIVE_APPS
-        .iter()
-        .find(|(name, _)| name.eq_ignore_ascii_case(repo_name))
-        .map(|(_, url)| *url)
-}
-
-/// "https://convert-ffi.onrender.com/" -> "convert-ffi.onrender.com"
-///
-/// The scheme is noise next to a link that already says where it goes, and the
-/// trailing slash makes two otherwise identical hosts look different.
-fn display_host(url: &str) -> String {
-    url.trim_start_matches("https://")
-        .trim_start_matches("http://")
-        .trim_end_matches('/')
-        .to_owned()
-}
-
-/// A project plus everything the section needs to sort, group and label it,
-/// computed once rather than on every re-render.
+/// A project plus everything the section needs to sort, group, filter and label
+/// it, computed once rather than on every re-render.
 #[derive(Clone)]
 struct Entry {
     title: String,
     description: String,
     url: Option<String>,
     live: Option<&'static str>,
+    /// The first curated language. Exactly one per project, which is what makes
+    /// the language facet a partition rather than a stack of overlapping tags.
+    language: String,
     languages: Vec<String>,
     status: Option<String>,
     maturity: Option<String>,
@@ -202,8 +203,19 @@ impl Entry {
         // Resolved before `title` is overwritten by the display name.
         let live = live_url(&portfolio_item.title);
 
+        let languages = metadata
+            .languages
+            .unwrap_or_default()
+            .into_iter()
+            .filter_map(|language| non_empty(&language))
+            .collect::<Vec<_>>();
+
         Self {
             live,
+            language: languages
+                .first()
+                .cloned()
+                .unwrap_or_else(|| NO_LANGUAGE.to_owned()),
             title: metadata
                 .title
                 .as_deref()
@@ -215,12 +227,7 @@ impl Entry {
                 .and_then(non_empty)
                 .unwrap_or(portfolio_item.description),
             url: portfolio_item.public_url.as_deref().and_then(non_empty),
-            languages: metadata
-                .languages
-                .unwrap_or_default()
-                .into_iter()
-                .filter_map(|language| non_empty(&language))
-                .collect(),
+            languages,
             status: metadata.status.as_deref().and_then(non_empty),
             maturity: metadata.maturity.as_deref().and_then(non_empty),
             highlights: metadata.highlights.unwrap_or_default(),
@@ -229,6 +236,70 @@ impl Entry {
             documented,
         }
     }
+}
+
+/// The three filter dimensions, combined with AND.
+///
+/// Each is `None`/`false` when inactive, so the default state is "everything"
+/// and no control has to be reset before another one is useful.
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct Facets {
+    axis: Option<bool>,
+    documented: bool,
+}
+
+impl Facets {
+    const OFF: Self = Self {
+        axis: None,
+        documented: false,
+    };
+
+    fn is_active(&self, language: &Option<String>) -> bool {
+        self.axis.is_some() || self.documented || language.is_some()
+    }
+}
+
+/// Does `entry` survive the given filters?
+///
+/// `skip` names the one dimension to ignore, which is what makes the counts
+/// beside each option honest: the number next to "Rust" is how many projects
+/// you get *if you press it*, given everything else already selected — not a
+/// static total that stops matching what the page does.
+fn matches(
+    entry: &Entry,
+    facets: &Facets,
+    language: &Option<String>,
+    skip: Option<Dimension>,
+) -> bool {
+    let check_axis = skip != Some(Dimension::Axis);
+    let check_language = skip != Some(Dimension::Language);
+    let check_documented = skip != Some(Dimension::Documented);
+
+    if check_axis {
+        if let Some(only) = facets.axis {
+            if entry.research != only {
+                return false;
+            }
+        }
+    }
+    if check_language {
+        if let Some(only) = language {
+            if &entry.language != only {
+                return false;
+            }
+        }
+    }
+    if check_documented && facets.documented && !entry.documented {
+        return false;
+    }
+    true
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Dimension {
+    Axis,
+    Language,
+    Documented,
 }
 
 #[component]
@@ -315,10 +386,9 @@ fn Archive(items: Vec<PortfolioItemWithMetadataDto>) -> impl IntoView {
         .filter(|item| item.portfolio_item.public)
         .collect::<Vec<_>>();
 
-    // The curated `display.priority` alone. The previous build floated `featured`
-    // projects to the top and promoted the first three into large tiles, which is a
-    // ranking of one's own work presented as a layout. Priority is the author's own
-    // ordering and needs no further editorialising.
+    // The curated `display.priority` alone, which puts the written-up projects first
+    // and the generated tail after. No `featured` float and no promoted tiles: that is
+    // a ranking of one's own work presented as a layout.
     //
     // `sort_by_cached_key`, not `sort_by_key`: the key allocates a lowercased title and
     // `sort_by_key` would rebuild it on every one of the O(n log n) comparisons.
@@ -335,15 +405,52 @@ fn Archive(items: Vec<PortfolioItemWithMetadataDto>) -> impl IntoView {
 
     let entries = items.into_iter().map(Entry::build).collect::<Vec<_>>();
     let total = entries.len();
-    let research_count = entries.iter().filter(|entry| entry.research).count();
-    let general_count = total - research_count;
 
-    // `None` is "both tracks"; `Some(true)` narrows to the research end of the axis.
-    let selected = RwSignal::new(None::<bool>);
+    // Language buckets, largest first, ties alphabetical so the row is stable between
+    // deploys. `Unspecified` sinks to the end regardless of size — it is the absence of
+    // an answer, not one of the answers.
+    let mut languages: Vec<String> = Vec::new();
+    for entry in &entries {
+        if !languages.contains(&entry.language) {
+            languages.push(entry.language.clone());
+        }
+    }
+    {
+        let counts = |name: &String| entries.iter().filter(|e| &e.language == name).count();
+        languages.sort_by_cached_key(|name| {
+            (
+                name == NO_LANGUAGE,
+                std::cmp::Reverse(counts(name)),
+                name.to_lowercase(),
+            )
+        });
+    }
+
+    let facets = RwSignal::new(Facets::OFF);
+    let language = RwSignal::new(None::<String>);
     let entries = StoredValue::new(entries);
 
-    let segment = move |research: bool, label: &'static str, count: usize| {
-        let is_active = move || selected.get() == Some(research);
+    // How many entries survive every filter except `skip`.
+    let count_for = move |skip: Option<Dimension>, probe: &dyn Fn(&Entry) -> bool| {
+        let (f, l) = (facets.get(), language.get());
+        entries.with_value(|entries| {
+            entries
+                .iter()
+                .filter(|entry| matches(entry, &f, &l, skip) && probe(entry))
+                .count()
+        })
+    };
+
+    let shown = move || count_for(None, &|_| true);
+    let clear = move || {
+        facets.set(Facets::OFF);
+        language.set(None);
+    };
+
+    // ── the axis ────────────────────────────────────────────────────────────
+    let segment = move |research: bool, label: &'static str| {
+        let count = move || count_for(Some(Dimension::Axis), &|e| e.research == research);
+        let is_active = move || facets.get().axis == Some(research);
         view! {
             <button
                 type="button"
@@ -353,18 +460,15 @@ fn Archive(items: Vec<PortfolioItemWithMetadataDto>) -> impl IntoView {
                 // presence, so `false` would drop `aria-pressed` entirely and the
                 // segments would read as plain buttons rather than a toggle set.
                 aria-pressed=move || if is_active() { "true" } else { "false" }
-                // flex-grow carries the proportion; `min-width` keeps a small bucket
-                // clickable. Both ends print their own count, so the exact number is
-                // never inferred from the width.
-                style=format!("--seg-share:{count}")
+                disabled=move || count() == 0 && !is_active()
+                // flex-grow carries the proportion, so the bar re-weights as the other
+                // filters narrow the set. Both ends print their own count, so the exact
+                // number is never inferred from the width.
+                style=move || format!("--seg-share:{}", count())
                 on:click=move |_| {
-                    selected
-                        .update(|current| {
-                            *current = if *current == Some(research) {
-                                None
-                            } else {
-                                Some(research)
-                            };
+                    facets
+                        .update(|f| {
+                            f.axis = if f.axis == Some(research) { None } else { Some(research) };
                         })
                 }
             >
@@ -374,18 +478,56 @@ fn Archive(items: Vec<PortfolioItemWithMetadataDto>) -> impl IntoView {
         }
     };
 
+    // ── the facet rows ──────────────────────────────────────────────────────
+    let language_options = languages
+        .into_iter()
+        .map(|name| {
+            let label = name.clone();
+            // A `StoredValue` rather than a captured `String`: the count and the
+            // active test are each read from several attributes, and a closure
+            // holding a `String` is not `Copy`, so it could only be used once.
+            let name = StoredValue::new(name);
+            let count = move || {
+                count_for(Some(Dimension::Language), &|entry| {
+                    name.with_value(|value| &entry.language == value)
+                })
+            };
+            let is_active = move || {
+                language.with(|current| {
+                    name.with_value(|value| current.as_deref() == Some(value.as_str()))
+                })
+            };
+            view! {
+                <button
+                    type="button"
+                    class="facet-opt"
+                    aria-pressed=move || if is_active() { "true" } else { "false" }
+                    disabled=move || count() == 0 && !is_active()
+                    on:click=move |_| {
+                        let active = is_active();
+                        language.set(if active { None } else { Some(name.get_value()) });
+                    }
+                >
+                    {label}
+                    <span class="facet-n">{count}</span>
+                </button>
+            }
+        })
+        .collect::<Vec<_>>();
+
+    let documented_count = move || count_for(Some(Dimension::Documented), &|e| e.documented);
+    let documented_active = move || facets.get().documented;
+
     view! {
         <div class="section-head">
             <h2 class="section-title">"Code"</h2>
-            // "projects", not "public repositories": this list is the intersection of
-            // the GitHub account with the curated `projects.json`, so it is always a
-            // subset of what is public. Labelling the subset with the superset's name
-            // reads as a claim about the whole account.
             <p class="section-count" aria-live="polite">
-                {move || match selected.get() {
-                    None => format!("{total} projects"),
-                    Some(true) => format!("{research_count} of {total}"),
-                    Some(false) => format!("{general_count} of {total}"),
+                {move || {
+                    if facets.get().is_active(&language.get()) {
+                        format!("{} of {total}", shown())
+                    } else {
+                        format!("{total} projects")
+                    }
                 }}
             </p>
         </div>
@@ -397,31 +539,59 @@ fn Archive(items: Vec<PortfolioItemWithMetadataDto>) -> impl IntoView {
              the rest are here for completeness."
         </p>
 
-        // The axis: one bar, two ends, real proportions.
+        // The axis stays a bar because it is the one split the page is about; the
+        // other two dimensions are plain rows of text, so three filters cost two
+        // hairlines rather than three widgets.
         <div class="axis" data-reveal="">
             <div
                 class="axis-bar"
                 role="group"
                 aria-label="Filter projects by what they came out of"
             >
-                {segment(true, "From the research", research_count)}
-                {segment(false, "Everything else", general_count)}
+                {segment(true, "From the research")}
+                {segment(false, "Everything else")}
             </div>
+
+            <div class="facets">
+                <div class="facet-row">
+                    <h3 class="facet-name" id="facet-language">
+                        "Language"
+                    </h3>
+                    <div class="facet-opts" role="group" aria-labelledby="facet-language">
+                        {language_options}
+                    </div>
+                </div>
+                <div class="facet-row">
+                    <h3 class="facet-name" id="facet-detail">
+                        "Detail"
+                    </h3>
+                    <div class="facet-opts" role="group" aria-labelledby="facet-detail">
+                        <button
+                            type="button"
+                            class="facet-opt"
+                            aria-pressed=move || if documented_active() { "true" } else { "false" }
+                            disabled=move || documented_count() == 0 && !documented_active()
+                            on:click=move |_| facets.update(|f| f.documented = !f.documented)
+                        >
+                            "Written up"
+                            <span class="facet-n">{documented_count}</span>
+                        </button>
+                    </div>
+                </div>
+            </div>
+
             <div class="axis-foot">
                 <p class="axis-caption">
-                    "Split by subject matter — whether a repository's domain is a laboratory one."
+                    "Counts show what each option would leave you with, given the others."
                 </p>
                 {move || {
-                    selected
+                    facets
                         .get()
-                        .map(|_| {
+                        .is_active(&language.get())
+                        .then(|| {
                             view! {
-                                <button
-                                    type="button"
-                                    class="axis-reset"
-                                    on:click=move |_| selected.set(None)
-                                >
-                                    "Show both"
+                                <button type="button" class="axis-reset" on:click=move |_| clear()>
+                                    "Clear filters"
                                 </button>
                             }
                         })
@@ -431,7 +601,7 @@ fn Archive(items: Vec<PortfolioItemWithMetadataDto>) -> impl IntoView {
 
         <div aria-live="polite">
             {move || {
-                let active = selected.get();
+                let (f, l) = (facets.get(), language.get());
                 entries
                     .with_value(|entries| {
                         let tracks = [
@@ -446,35 +616,44 @@ fn Archive(items: Vec<PortfolioItemWithMetadataDto>) -> impl IntoView {
                                 "Infrastructure, side projects, and things I wrote to understand how they work.",
                             ),
                         ];
-                        tracks
+                        let rendered = tracks
                             .into_iter()
-                            .filter(|(research, _, _)| active.is_none_or(|only| only == *research))
-                            .map(|(research, name, note)| {
+                            .filter_map(|(research, name, note)| {
                                 let rows = entries
                                     .iter()
-                                    .filter(|entry| entry.research == research)
+                                    .filter(|entry| {
+                                        entry.research == research && matches(entry, &f, &l, None)
+                                    })
                                     .map(|entry| view! { <Row entry=entry.clone() /> })
                                     .collect::<Vec<_>>();
-                                if rows.is_empty() {
-                                    return view! {
-                                        <p class="row-empty">
-                                            "Nothing on this side of the axis yet."
-                                        </p>
-                                    }
-                                        .into_any();
-                                }
-                                view! {
-                                    <section class="track" class:is-research=research>
-                                        <div class="track-head">
-                                            <h3 class="track-name">{name}</h3>
-                                            <p class="track-note">{note}</p>
-                                        </div>
-                                        {rows}
-                                    </section>
-                                }
-                                    .into_any()
+                                (!rows.is_empty())
+                                    .then(|| {
+                                        // An empty track is dropped rather than captioned: with
+                                        // three filters combining, "nothing here" is the normal
+                                        // case for one side and says nothing worth a heading.
+                                        view! {
+                                            <section class="track" class:is-research=research>
+                                                <div class="track-head">
+                                                    <h3 class="track-name">{name}</h3>
+                                                    <p class="track-note">{note}</p>
+                                                </div>
+                                                {rows}
+                                            </section>
+                                        }
+                                    })
                             })
-                            .collect::<Vec<_>>()
+                            .collect::<Vec<_>>();
+                        if rendered.is_empty() {
+                            return
+                            view! {
+                                <p class="row-empty">
+                                    "Nothing matches all of those at once. Clearing one of them
+                                     should bring something back."
+                                </p>
+                            }
+                                .into_any();
+                        }
+                        view! { <>{rendered}</> }.into_any()
                     })
             }}
         </div>
@@ -536,7 +715,7 @@ fn Row(entry: Entry) -> impl IntoView {
                 // A deployed instance gets its own link rather than replacing the
                 // repository one: the two destinations answer different questions,
                 // and the host is printed so it is clear which is which before
-                // anyone clicks. Accessible name reads "Live, <host>".
+                // anyone clicks.
                 {live
                     .map(|url| {
                         let host = display_host(url);

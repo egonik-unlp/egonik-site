@@ -9,27 +9,41 @@ Ordered by how much they'd improve the page per unit of work.
 
 ---
 
-## 0. How many projects render, and why
+## 0. How many projects render — RESOLVED
 
-`projects.json` has since grown from 22 entries to **104** — effectively the
-whole account. That removes the curation ceiling; the only remaining limit is the
-pagination bug.
+The archive now renders **100 projects**. Both filters that used to cut it are
+gone.
 
 | stage | count |
 |---|---|
 | repositories on the GitHub account | **103** |
-| minus 3 forks (0 archived) → what a correct sync inserts | **100** |
-| actually in `portfolio_items` today | **30** ← pagination |
+| minus 3 forks (0 archived) | **100** |
+| in `portfolio_items` after the re-sync | **100** ✓ |
 | entries in the published `projects.json` | **104** |
-| **rendered now** = database ∩ `projects.json` | **30** |
-| **rendered after a correct re-sync** | **~100** |
+| **rendered** = database ∩ `projects.json` | **100** |
 
-Two filters used to stack; now only one bites:
+What it took:
 
-1. **Pagination (a bug, fixed but not applied).** The database holds page 1 only.
-   Re-syncing takes the archive from 30 to about 100.
-2. **Curation** used to drop anything absent from `projects.json`. With 104
-   entries covering the account, it no longer excludes anything meaningful.
+1. **The pagination loop** in `get_public_github_repos` (yours) — pages at
+   `per_page=100` instead of taking GitHub's 30-item first page.
+2. **An upsert in `create_article`** (added here). `portfolio_items.title` is
+   `UNIQUE` and the insert had no `ON CONFLICT`, so the second run aborted on the
+   first repository that already existed — which is why the pagination fix never
+   reached the database. It now upserts on `title` and *replaces* the item's tags
+   rather than appending, so the whole sync is idempotent and safe to schedule.
+3. **Curation** stopped biting on its own when `projects.json` grew to 104
+   entries covering the account.
+
+Re-run it any time with:
+
+```
+cargo run --bin seed_publications --no-default-features --features ssr
+```
+
+**`tags` is still 0, and that is correct** — not a fourth bug. **Zero of the 103
+repositories have GitHub topics set**, so there is nothing for the tag sync to
+insert. Setting topics on the repositories you care about would populate it; the
+UI already falls back to `metadata.languages`, so nothing is broken meanwhile.
 
 `spotify-next-track` still has **no repository of that name**, so it can never
 match and its live link can never render. Rename the key or drop it.
@@ -62,43 +76,19 @@ Two consequences, both handled in the UI:
 `domains` on the generated entries — it is the field the axis would rather read,
 and it is derivable from the description you are already writing.
 
-### The pagination bug itself
+### How the pagination bug was diagnosed, for the record
 
-**Yes, it was pagination, and you have already fixed it.** The fix is sitting
-uncommitted in your working tree; the database just hasn't been re-synced since.
-
-The evidence:
-
-- `portfolio_items` holds **exactly 30 rows** — GitHub's default `per_page` for
+- `portfolio_items` held **exactly 30 rows** — GitHub's default `per_page` for
   `GET /users/{username}/repos`.
-- That endpoint defaults to sorting by `full_name` ascending. The
-  alphabetically last row in the database is **`demoLogits`**, and **every one of
-  the 13 missing repositories sorts after it**: `detect-open-realstate-apis`,
-  `dump_ps`, `flagen`, `gases`, `glotaran_converter_cli`,
-  `glotaran_converter_lib`, `lvv`, `MOFSocialNet.jl`, `PHcalc.jl`,
-  `remote_listener`, `rllm`, `rust_MD`, `xrd_match`. That is page 1 and nothing
-  else.
-- Your current `get_public_github_repos` in `src/portfolio/service.rs` now loops
-  `page=1..` at `per_page=100` and stops on a short page. That is correct.
+- That endpoint defaults to sorting by `full_name` ascending. The alphabetically
+  last row in the database was **`demoLogits`**, and **every missing repository
+  sorted after it**. That is page 1 and nothing else.
 
-Note what the cut removed: the missing 13 are overwhelmingly **the laboratory
-side** — both Glotaran converters, XRD matching, two molecular-dynamics
-simulations, the pH calculator, the MOF analysis. The site was showing the
-Spotify tools and web apps and hiding the science. Which is precisely why the
-research/software axis had nothing to stand on.
-
-**One blocker before you re-run the sync.** `create_article` is a plain
-`insert_into` with no `ON CONFLICT`, and `portfolio_items.title` is `UNIQUE`, so
-re-running `seed_publications` will abort on the first row that already exists.
-Either
-
-```sql
-TRUNCATE tags, portfolio_items RESTART IDENTITY CASCADE;
-```
-
-before the sync, or give `create_article` an upsert
-(`.on_conflict(portfolio_items::title).do_update()`), which also makes the sync
-safe to run on a schedule.
+Note what the cut removed: the missing entries were overwhelmingly **the
+laboratory side** — both Glotaran converters, XRD matching, two
+molecular-dynamics simulations, the pH calculator, the MOF analysis. The site was
+showing the Spotify tools and web apps and hiding the science, which is precisely
+why the research/software axis had nothing to stand on.
 
 ### Related: your local `projects.json` is out of sync with the published one
 

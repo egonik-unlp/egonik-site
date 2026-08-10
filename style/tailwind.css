@@ -535,10 +535,69 @@
   .axis-name {
     @apply u-data truncate;
   }
+  /* ═══ FACETS ══════════════════════════════════════════════════════════
+     Two more filter dimensions, carried as ruled rows of plain text rather
+     than as another bar or a row of pills. Same label/values grid the toolkit
+     uses, so the added structure costs two hairlines and no new chrome. */
+  .facets {
+    margin-top: 1rem;
+    border-top: 1px solid var(--color-rule);
+  }
+  .facet-row {
+    @apply grid items-baseline;
+    grid-template-columns: minmax(0, 6.5rem) minmax(0, 1fr);
+    gap: 0.3rem clamp(0.85rem, 2.5vw, 2rem);
+    padding: 0.55rem 0;
+    border-bottom: 1px solid var(--color-rule);
+  }
+  .facet-name {
+    @apply u-data;
+    color: var(--color-ink-3);
+  }
+  .facet-opts {
+    @apply flex flex-wrap items-baseline;
+    gap: 0.15rem 0.9rem;
+  }
+  .facet-opt {
+    @apply u-data-lc inline-flex cursor-pointer items-baseline gap-1;
+    appearance: none;
+    background: none;
+    border: 0;
+    padding: 0.1rem 0;
+    color: var(--color-ink-2);
+    border-bottom: 1px solid transparent;
+    transition:
+      color 0.2s var(--ease-out-quart),
+      border-color 0.2s var(--ease-out-quart);
+  }
+  .facet-opt:hover:not(:disabled) {
+    color: var(--color-ink);
+    border-bottom-color: var(--color-rule-strong);
+  }
+  .facet-opt[aria-pressed="true"] {
+    color: var(--color-pen-ink);
+    font-weight: 700;
+    border-bottom-color: var(--color-pen);
+  }
+  /* An option that would return nothing, given the other filters. Kept in place
+     rather than removed so the row does not reflow on every click. */
+  .facet-opt:disabled {
+    cursor: not-allowed;
+    opacity: 0.38;
+  }
+  .facet-n {
+    @apply tabular;
+    font-size: 0.9em;
+    color: var(--color-ink-3);
+  }
+  .facet-opt[aria-pressed="true"] .facet-n {
+    color: inherit;
+  }
+
   .axis-foot {
     @apply flex flex-wrap items-baseline justify-between;
     gap: 0.4rem 1rem;
-    margin-top: 0.6rem;
+    margin-top: 0.7rem;
   }
   .axis-caption {
     @apply u-data-lc;

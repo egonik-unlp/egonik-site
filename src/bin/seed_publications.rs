@@ -15,7 +15,8 @@ async fn main() -> anyhow::Result<()> {
     appstate
         .publications_service
         .sync_publication_history()
-        .await;
+        .await
+        .context("Can't get publication history")?;
     appstate
         .personal_information_service
         .load_config_from_toml(config_path)
