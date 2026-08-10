@@ -238,59 +238,39 @@ impl Entry {
     }
 }
 
-/// The three filter dimensions, combined with AND.
+/// Does `entry` survive the current controls?
 ///
-/// Each is `None`/`false` when inactive, so the default state is "everything"
-/// and no control has to be reset before another one is useful.
-#[derive(Clone, Copy, PartialEq, Eq)]
-struct Facets {
-    axis: Option<bool>,
-    documented: bool,
-}
-
-impl Facets {
-    const OFF: Self = Self {
-        axis: None,
-        documented: false,
-    };
-
-    fn is_active(&self, language: &Option<String>) -> bool {
-        self.axis.is_some() || self.documented || language.is_some()
-    }
-}
-
-/// Does `entry` survive the given filters?
+/// `skip` names the one *filter* dimension to ignore, which is what makes the
+/// counts beside each option honest: the number next to "Rust" is how many
+/// projects you get *if you press it*, given everything else already selected —
+/// not a static total that stops matching what the page does.
 ///
-/// `skip` names the one dimension to ignore, which is what makes the counts
-/// beside each option honest: the number next to "Rust" is how many projects
-/// you get *if you press it*, given everything else already selected — not a
-/// static total that stops matching what the page does.
+/// `show_all` is never skipped. It is disclosure rather than a filter: the
+/// question every count answers is "within what is currently on the page", so
+/// revealing the tail has to move every number with it.
 fn matches(
     entry: &Entry,
-    facets: &Facets,
+    axis: Option<bool>,
     language: &Option<String>,
+    show_all: bool,
     skip: Option<Dimension>,
 ) -> bool {
-    let check_axis = skip != Some(Dimension::Axis);
-    let check_language = skip != Some(Dimension::Language);
-    let check_documented = skip != Some(Dimension::Documented);
-
-    if check_axis {
-        if let Some(only) = facets.axis {
+    if !show_all && !entry.documented {
+        return false;
+    }
+    if skip != Some(Dimension::Axis) {
+        if let Some(only) = axis {
             if entry.research != only {
                 return false;
             }
         }
     }
-    if check_language {
+    if skip != Some(Dimension::Language) {
         if let Some(only) = language {
             if &entry.language != only {
                 return false;
             }
         }
-    }
-    if check_documented && facets.documented && !entry.documented {
-        return false;
     }
     true
 }
@@ -299,7 +279,6 @@ fn matches(
 enum Dimension {
     Axis,
     Language,
-    Documented,
 }
 
 #[component]
@@ -406,51 +385,38 @@ fn Archive(items: Vec<PortfolioItemWithMetadataDto>) -> impl IntoView {
     let entries = items.into_iter().map(Entry::build).collect::<Vec<_>>();
     let total = entries.len();
 
-    // Language buckets, largest first, ties alphabetical so the row is stable between
-    // deploys. `Unspecified` sinks to the end regardless of size — it is the absence of
-    // an answer, not one of the answers.
-    let mut languages: Vec<String> = Vec::new();
-    for entry in &entries {
-        if !languages.contains(&entry.language) {
-            languages.push(entry.language.clone());
-        }
-    }
-    {
-        let counts = |name: &String| entries.iter().filter(|e| &e.language == name).count();
-        languages.sort_by_cached_key(|name| {
-            (
-                name == NO_LANGUAGE,
-                std::cmp::Reverse(counts(name)),
-                name.to_lowercase(),
-            )
-        });
-    }
+    // The written-up entries are the default view. Landing on a hundred rows,
+    // most of them a name and one sentence, buries the twenty-one that were
+    // actually written about — so the tail is disclosed rather than presented.
+    let documented_total = entries.iter().filter(|entry| entry.documented).count();
 
-    let facets = RwSignal::new(Facets::OFF);
+    let axis = RwSignal::new(None::<bool>);
     let language = RwSignal::new(None::<String>);
+    let show_all = RwSignal::new(false);
     let entries = StoredValue::new(entries);
 
     // How many entries survive every filter except `skip`.
     let count_for = move |skip: Option<Dimension>, probe: &dyn Fn(&Entry) -> bool| {
-        let (f, l) = (facets.get(), language.get());
+        let (a, l, all) = (axis.get(), language.get(), show_all.get());
         entries.with_value(|entries| {
             entries
                 .iter()
-                .filter(|entry| matches(entry, &f, &l, skip) && probe(entry))
+                .filter(|entry| matches(entry, a, &l, all, skip) && probe(entry))
                 .count()
         })
     };
 
     let shown = move || count_for(None, &|_| true);
+    let filtered = move || axis.get().is_some() || language.with(Option::is_some);
     let clear = move || {
-        facets.set(Facets::OFF);
+        axis.set(None);
         language.set(None);
     };
 
     // ── the axis ────────────────────────────────────────────────────────────
     let segment = move |research: bool, label: &'static str| {
         let count = move || count_for(Some(Dimension::Axis), &|e| e.research == research);
-        let is_active = move || facets.get().axis == Some(research);
+        let is_active = move || axis.get() == Some(research);
         view! {
             <button
                 type="button"
@@ -466,10 +432,8 @@ fn Archive(items: Vec<PortfolioItemWithMetadataDto>) -> impl IntoView {
                 // number is never inferred from the width.
                 style=move || format!("--seg-share:{}", count())
                 on:click=move |_| {
-                    facets
-                        .update(|f| {
-                            f.axis = if f.axis == Some(research) { None } else { Some(research) };
-                        })
+                    let active = is_active();
+                    axis.set(if active { None } else { Some(research) });
                 }
             >
                 <span class="axis-n">{count}</span>
@@ -478,70 +442,100 @@ fn Archive(items: Vec<PortfolioItemWithMetadataDto>) -> impl IntoView {
         }
     };
 
-    // ── the facet rows ──────────────────────────────────────────────────────
-    let language_options = languages
-        .into_iter()
-        .map(|name| {
-            let label = name.clone();
-            // A `StoredValue` rather than a captured `String`: the count and the
-            // active test are each read from several attributes, and a closure
-            // holding a `String` is not `Copy`, so it could only be used once.
-            let name = StoredValue::new(name);
-            let count = move || {
-                count_for(Some(Dimension::Language), &|entry| {
-                    name.with_value(|value| &entry.language == value)
-                })
-            };
-            let is_active = move || {
-                language.with(|current| {
-                    name.with_value(|value| current.as_deref() == Some(value.as_str()))
-                })
-            };
-            view! {
-                <button
-                    type="button"
-                    class="facet-opt"
-                    aria-pressed=move || if is_active() { "true" } else { "false" }
-                    disabled=move || count() == 0 && !is_active()
-                    on:click=move |_| {
-                        let active = is_active();
-                        language.set(if active { None } else { Some(name.get_value()) });
-                    }
-                >
-                    {label}
-                    <span class="facet-n">{count}</span>
-                </button>
+    // ── the language row ────────────────────────────────────────────────────
+    // Rebuilt whenever the disclosure changes, so the row lists the languages
+    // that are actually on the page: seven while collapsed, sixteen once the
+    // tail is out. Listing all sixteen up front would mean nine permanently
+    // dimmed options advertising work you cannot reach yet.
+    //
+    // Largest bucket first, ties alphabetical so the order is stable between
+    // deploys. `Unspecified` sinks to the end regardless of size — it is the
+    // absence of an answer, not one of the answers.
+    let language_options = move || {
+        let all = show_all.get();
+        let names = entries.with_value(|entries| {
+            let visible = |entry: &Entry| all || entry.documented;
+            let mut names: Vec<String> = Vec::new();
+            for entry in entries.iter().filter(|entry| visible(entry)) {
+                if !names.contains(&entry.language) {
+                    names.push(entry.language.clone());
+                }
             }
-        })
-        .collect::<Vec<_>>();
+            let count = |name: &String| {
+                entries
+                    .iter()
+                    .filter(|entry| visible(entry) && &entry.language == name)
+                    .count()
+            };
+            names.sort_by_cached_key(|name| {
+                (
+                    name == NO_LANGUAGE,
+                    std::cmp::Reverse(count(name)),
+                    name.to_lowercase(),
+                )
+            });
+            names
+        });
 
-    let documented_count = move || count_for(Some(Dimension::Documented), &|e| e.documented);
-    let documented_active = move || facets.get().documented;
+        names
+            .into_iter()
+            .map(|name| {
+                let label = name.clone();
+                // A `StoredValue` rather than a captured `String`: the count and
+                // the active test are each read from several attributes, and a
+                // closure holding a `String` is not `Copy`, so it could only be
+                // used once.
+                let name = StoredValue::new(name);
+                let count = move || {
+                    count_for(Some(Dimension::Language), &|entry| {
+                        name.with_value(|value| &entry.language == value)
+                    })
+                };
+                let is_active = move || {
+                    language.with(|current| {
+                        name.with_value(|value| current.as_deref() == Some(value.as_str()))
+                    })
+                };
+                view! {
+                    <button
+                        type="button"
+                        class="facet-opt"
+                        aria-pressed=move || if is_active() { "true" } else { "false" }
+                        disabled=move || count() == 0 && !is_active()
+                        on:click=move |_| {
+                            let active = is_active();
+                            language.set(if active { None } else { Some(name.get_value()) });
+                        }
+                    >
+                        {label}
+                        <span class="facet-n">{count}</span>
+                    </button>
+                }
+            })
+            .collect::<Vec<_>>()
+    };
+
+    let tail_total = total - documented_total;
 
     view! {
         <div class="section-head">
             <h2 class="section-title">"Code"</h2>
+            // Always "N of M": the default view is already a subset, so printing a
+            // bare count would claim the archive is twenty-one projects long.
             <p class="section-count" aria-live="polite">
-                {move || {
-                    if facets.get().is_active(&language.get()) {
-                        format!("{} of {total}", shown())
-                    } else {
-                        format!("{total} projects")
-                    }
-                }}
+                {move || format!("{} of {total}", shown())}
             </p>
         </div>
         <p class="section-lede">
-            "Everything public on the account — research tooling, side projects, coursework and a
-             fair amount of scratch. A good part of it exists because an experiment needed
-             something that wasn't available yet: a file format nobody documents, a method from a
-             paper with no implementation. The ones I have written up properly carry more detail;
-             the rest are here for completeness."
+            "A good part of this exists because an experiment needed something that wasn't
+             available yet: a file format nobody documents, a method from a paper with no
+             implementation. These are the ones I have written up — the rest of the account is
+             at the bottom, and it is mostly scratch."
         </p>
 
-        // The axis stays a bar because it is the one split the page is about; the
-        // other two dimensions are plain rows of text, so three filters cost two
-        // hairlines rather than three widgets.
+        // The axis stays a bar because it is the one split the page is about; language
+        // is a plain row of text, so a second filter dimension costs one hairline
+        // rather than a second widget.
         <div class="axis" data-reveal="">
             <div
                 class="axis-bar"
@@ -561,23 +555,6 @@ fn Archive(items: Vec<PortfolioItemWithMetadataDto>) -> impl IntoView {
                         {language_options}
                     </div>
                 </div>
-                <div class="facet-row">
-                    <h3 class="facet-name" id="facet-detail">
-                        "Detail"
-                    </h3>
-                    <div class="facet-opts" role="group" aria-labelledby="facet-detail">
-                        <button
-                            type="button"
-                            class="facet-opt"
-                            aria-pressed=move || if documented_active() { "true" } else { "false" }
-                            disabled=move || documented_count() == 0 && !documented_active()
-                            on:click=move |_| facets.update(|f| f.documented = !f.documented)
-                        >
-                            "Written up"
-                            <span class="facet-n">{documented_count}</span>
-                        </button>
-                    </div>
-                </div>
             </div>
 
             <div class="axis-foot">
@@ -585,9 +562,7 @@ fn Archive(items: Vec<PortfolioItemWithMetadataDto>) -> impl IntoView {
                     "Counts show what each option would leave you with, given the others."
                 </p>
                 {move || {
-                    facets
-                        .get()
-                        .is_active(&language.get())
+                    filtered()
                         .then(|| {
                             view! {
                                 <button type="button" class="axis-reset" on:click=move |_| clear()>
@@ -599,9 +574,9 @@ fn Archive(items: Vec<PortfolioItemWithMetadataDto>) -> impl IntoView {
             </div>
         </div>
 
-        <div aria-live="polite">
+        <div id="code-archive" aria-live="polite">
             {move || {
-                let (f, l) = (facets.get(), language.get());
+                let (a, l, all) = (axis.get(), language.get(), show_all.get());
                 entries
                     .with_value(|entries| {
                         let tracks = [
@@ -622,7 +597,8 @@ fn Archive(items: Vec<PortfolioItemWithMetadataDto>) -> impl IntoView {
                                 let rows = entries
                                     .iter()
                                     .filter(|entry| {
-                                        entry.research == research && matches(entry, &f, &l, None)
+                                        entry.research == research
+                                            && matches(entry, a, &l, all, None)
                                     })
                                     .map(|entry| view! { <Row entry=entry.clone() /> })
                                     .collect::<Vec<_>>();
@@ -644,8 +620,7 @@ fn Archive(items: Vec<PortfolioItemWithMetadataDto>) -> impl IntoView {
                             })
                             .collect::<Vec<_>>();
                         if rendered.is_empty() {
-                            return
-                            view! {
+                            return view! {
                                 <p class="row-empty">
                                     "Nothing matches all of those at once. Clearing one of them
                                      should bring something back."
@@ -657,6 +632,70 @@ fn Archive(items: Vec<PortfolioItemWithMetadataDto>) -> impl IntoView {
                     })
             }}
         </div>
+
+        // Progressive disclosure, not a filter: the tail is real work, it is just
+        // not written up, so it sits behind one control at the end of the list
+        // rather than being hidden or paginated away.
+        {(tail_total > 0)
+            .then(|| {
+                view! {
+                    <div class="disclose">
+                        <button
+                            type="button"
+                            class="disclose-btn"
+                            aria-expanded=move || if show_all.get() { "true" } else { "false" }
+                            // The list it grows, not the section it sits in.
+                            aria-controls="code-archive"
+                            on:click=move |_| {
+                                let opening = !show_all.get();
+                                show_all.set(opening);
+                                if !opening {
+                                    let survives = language
+                                        .with(|current| {
+                                            current
+                                                .as_ref()
+                                                .map(|name| {
+                                                    entries
+                                                        .with_value(|entries| {
+                                                            entries
+                                                                .iter()
+                                                                .any(|entry| {
+                                                                    entry.documented && &entry.language == name
+                                                                })
+                                                        })
+                                                })
+                                        });
+                                    if survives == Some(false) {
+                                        language.set(None);
+                                    }
+                                }
+                            }
+                        >
+                            <span class="disclose-mark" aria-hidden="true">
+                                {move || if show_all.get() { "−" } else { "+" }}
+                            </span>
+                            <span class="disclose-label">
+                                {move || {
+                                    if show_all.get() {
+                                        format!("Show only the {documented_total} written up")
+                                    } else {
+                                        format!("Show the other {tail_total}")
+                                    }
+                                }}
+                            </span>
+                            <span class="disclose-note">
+                                {move || {
+                                    if show_all.get() {
+                                        "Collapse back to the ones with a description"
+                                    } else {
+                                        "Coursework, experiments and scratch — a name and a line each"
+                                    }
+                                }}
+                            </span>
+                        </button>
+                    </div>
+                }
+            })}
     }
 }
 

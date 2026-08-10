@@ -61,10 +61,19 @@ Field presence differs sharply, and the UI now depends on that difference:
 
 Two consequences, both handled in the UI:
 
-- **`categories` is the discriminator.** Present on all 22 written-up entries and
-  none of the generated ones, so `is_documented` uses it to decide row density: a
-  written-up row runs ~135px, a generated one ~49px. Nothing is hidden — the row
-  is short because the record is short.
+- **`categories` is the discriminator**, and it now does two jobs. Present on all
+  22 written-up entries and none of the generated ones, `is_documented` uses it
+  to decide (a) **what shows by default** — the 21 written-up projects, with the
+  other 79 behind one disclosure control at the end of the list — and (b) **row
+  density**, so a written-up row runs ~135px and a generated one ~49px. Nothing
+  is hidden: the tail is one click away and the row is short because the record
+  is short.
+
+  This is why `domains` on the generated entries matters less than it looks:
+  those entries are the tail, not the front page. What would change the front
+  page is writing `categories`/`domains`/`highlights` for a repository you want
+  promoted out of the tail — that is the whole editorial lever, and it lives in
+  `projects.json` rather than in the code.
 - **The axis classifier had to stop reading `domains`.** With `domains` on 1 of
   82, `glotaran_converter`, `glotaran_gui`, `glotaran_preprocessing`, `mof_xrd`,
   `QuenchingLFP`, `plotter_eem`, `_eem_converter`, `deconv_fit`,

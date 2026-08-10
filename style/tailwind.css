@@ -759,6 +759,52 @@
     border-bottom: 1px solid var(--color-rule);
   }
 
+  /* ═══ DISCLOSURE ══════════════════════════════════════════════════════
+     The tail of the archive, behind one control. Shaped like a final table
+     row rather than a button so it reads as the end of the list it extends. */
+  .disclose {
+    margin-top: clamp(1.5rem, 3vw, 2.25rem);
+  }
+  .disclose-btn {
+    @apply grid w-full cursor-pointer items-baseline text-left;
+    grid-template-columns: 1.25rem minmax(0, auto) minmax(0, 1fr);
+    gap: 0.35rem clamp(0.6rem, 1.5vw, 1.25rem);
+    appearance: none;
+    background: none;
+    border: 0;
+    border-top: 1px solid var(--color-ink);
+    border-bottom: 1px solid var(--color-rule);
+    padding: clamp(0.9rem, 1.8vw, 1.15rem) 0;
+    transition: background 0.25s var(--ease-out-quart);
+  }
+  .disclose-btn:hover {
+    background: color-mix(in oklch, var(--color-pen) 6%, transparent);
+  }
+  .disclose-mark {
+    font-variation-settings: "wdth" 100;
+    font-weight: 700;
+    font-size: 1.05rem;
+    line-height: 1;
+    color: var(--color-pen);
+  }
+  .disclose-label {
+    @apply u-data;
+    color: var(--color-pen-ink);
+  }
+  .disclose-note {
+    @apply u-data-lc;
+    color: var(--color-ink-3);
+  }
+
+  @media (max-width: 760px) {
+    .disclose-btn {
+      grid-template-columns: 1.25rem minmax(0, 1fr);
+    }
+    .disclose-note {
+      grid-column: 2;
+    }
+  }
+
   /* ═══ CHIPS ═══════════════════════════════════════════════════════════ */
   .chip {
     @apply u-data inline-flex items-center gap-1.5 whitespace-nowrap;
