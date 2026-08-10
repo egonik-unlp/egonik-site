@@ -1,4 +1,4 @@
-use leptos::{attr::Data, prelude::*};
+use leptos::prelude::*;
 
 use crate::portfolio::dto::{PortfolioItemDto, PortfolioItemWithMetadataDto};
 

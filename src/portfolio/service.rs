@@ -1,8 +1,8 @@
-use std::todo;
+use std::collections::HashMap;
 
 use crate::portfolio::{
     dto::{PortfolioItemDto, PortfolioItemWithMetadataDto},
-    metadata::ProjectMetadataTableDto,
+    metadata::{ProjectMetadataDto, ProjectMetadataTableDto},
     model::{PortfolioItemRow, TagRow},
     repository::{PortfolioItemsRepository, PortfolioTuple},
 };
@@ -72,22 +72,58 @@ impl Into<PortfolioTuple> for GithubRepo {
         )
     }
 }
-pub async fn get_public_github_repos(username: &str) -> Result<Vec<GithubRepo>, reqwest::Error> {
-    let url = format!("https://api.github.com/users/{username}/repos");
+/// GitHub's maximum page size for this endpoint.
+const GITHUB_PAGE_SIZE: usize = 100;
 
-    let repos = reqwest::Client::new()
-        .get(url)
-        .header(USER_AGENT, "egonik-site")
-        .header(ACCEPT, "application/vnd.github+json")
-        .header("X-GitHub-Api-Version", "2022-11-28")
-        .send()
-        .await?
-        .error_for_status()?
-        .json::<Vec<GithubRepo>>()
-        .await?;
+pub async fn get_public_github_repos(username: &str) -> Result<Vec<GithubRepo>, reqwest::Error> {
+    // This endpoint paginates and defaults to 30 items per page. The original request
+    // sent no `per_page`/`page` and kept only the first page, so the sync silently
+    // capped the portfolio at the 30 most recently pushed repositories -- which is why
+    // repos present in projects.json had no row in the database at all.
+    let client = reqwest::Client::new();
+    let mut repos = Vec::new();
+
+    for page in 1u32.. {
+        let url = format!(
+            "https://api.github.com/users/{username}/repos?per_page={GITHUB_PAGE_SIZE}&page={page}"
+        );
+        let batch = client
+            .get(url)
+            .header(USER_AGENT, "egonik-site")
+            .header(ACCEPT, "application/vnd.github+json")
+            .header("X-GitHub-Api-Version", "2022-11-28")
+            .send()
+            .await?
+            .error_for_status()?
+            .json::<Vec<GithubRepo>>()
+            .await?;
+
+        let is_last_page = batch.len() < GITHUB_PAGE_SIZE;
+        repos.extend(batch);
+        if is_last_page {
+            break;
+        }
+    }
 
     Ok(repos)
 }
+/// Takes the entry for `key` out of the map, first by exact hit and then by a
+/// case-insensitive scan -- GitHub repository names are case-preserving but not
+/// case-sensitive, so `projects.json` and the database can disagree on casing.
+fn remove_ignore_ascii_case(
+    repositories: &mut HashMap<String, ProjectMetadataDto>,
+    key: &str,
+) -> Option<ProjectMetadataDto> {
+    if let Some(metadata) = repositories.remove(key) {
+        return Some(metadata);
+    }
+    let matched = repositories
+        .keys()
+        .find(|name| name.eq_ignore_ascii_case(key))?
+        .clone();
+    repositories.remove(&matched)
+}
+
 impl PortfolioService {
     pub fn new(repo: PortfolioItemsRepository) -> Self {
         Self { repo }
@@ -99,6 +135,9 @@ impl PortfolioService {
             .await
             .context("Error syncing with gh")?
             .into_iter()
+            // Forks are other people's work and archived repositories are retired --
+            // neither belongs in a "selected work" listing.
+            .filter(|repo| !repo.fork && !repo.archived)
             .map(Into::into)
         {
             self.repo.clone().create_article(portfolio_item).await?
@@ -124,20 +163,23 @@ impl PortfolioService {
             .get_all()
             .await
             .context("Error getting projects from db")?;
+        // `repositories` is keyed by GitHub repository name, which is exactly what the
+        // sync stores in `portfolio_items.title` (see `Into<PortfolioTuple> for GithubRepo`).
+        // The inner `metadata.title` is the *display* name ("app" -> "Pathfinder"), so
+        // matching on it only ever succeeded when the two happened to coincide.
+        //
+        // Draining the map instead of cloning it keeps this O(n) and stops one metadata
+        // entry from being handed to two different projects.
+        let mut repositories = metadata.repositories;
         let projects_with_metadata = projects
             .into_iter()
             .filter_map(|project| {
-                metadata
-                    .clone()
-                    .repositories
-                    .into_iter()
-                    .map(|(name, project_metadata)| project_metadata.clone())
-                    .find(|project_metadata| project.is_its_metadata(project_metadata))
-                    .map(|project_metadata| {
-                        PortfolioItemWithMetadataDto::new(project, project_metadata)
-                    })
+                let project_metadata = remove_ignore_ascii_case(&mut repositories, &project.title)?;
+                Some(PortfolioItemWithMetadataDto::new(project, project_metadata))
             })
             .collect();
+        // Projects with no entry in projects.json are dropped on purpose: that file is
+        // the curation list for this section, not just an enrichment source.
         Ok(projects_with_metadata)
     }
     pub async fn get_all(&self) -> anyhow::Result<Vec<PortfolioItemDto>> {

@@ -1,6 +1,3 @@
-pub mod contact;
-pub mod hero;
+pub mod footer;
 pub mod nav;
-pub mod projects;
-pub mod research;
-pub mod skills;
+pub mod toolkit;
