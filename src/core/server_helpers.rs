@@ -6,16 +6,16 @@ use leptos::prelude::ServerFnError;
 
 use crate::entrypoint::application_state::AppState;
 
-pub async fn with_extractor_and_service<T, F, FS, R, Fut>(
+pub async fn with_extractor_and_service<FS, F, Fut, R, T>(
     mut service_extractor: FS,
     mut f: F,
 ) -> Result<T, ServerFnError>
 where
+    F: FnOnce(R) -> Fut,
+    FS: Fn(Data<AppState>) -> R,
+    T:,
     Fut: Future<Output = Result<T, anyhow::Error>>,
-    F: FnOnce(R) -> Fut + Send + 'static,
-    FS: Fn(Data<AppState>) -> R + Send + 'static,
-    T: Send + 'static,
-    R: Send + Clone + 'static,
+    R: Clone,
 {
     use crate::entrypoint::application_state::AppState;
     use actix_web::web::Data;
