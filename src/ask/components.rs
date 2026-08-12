@@ -265,6 +265,21 @@ fn reveal(_target_id: &str) {}
 /// `assets/` by cargo-leptos.
 const STUDENT_URL: &str = "/student.bin";
 
+/// Whether to fetch the distilled dense stage at all. **Off, on measurement.**
+///
+/// Operated at a confidence floor strict enough to add no out-of-scope leak of its
+/// own, the table gains 2 points overall (48% -> 50%) for 12MB — it falls through 5
+/// times in 250 queries. At the looser floor where it gained 9 points it let 50% of
+/// out-of-scope queries through, undoing the lexical layers' refusals. Its wrong
+/// answers score nearly as high as its right ones, and that overlap is what makes it
+/// unusable, not its accuracy. See project-black/README.md.
+///
+/// A runtime const rather than a cargo feature so the whole path stays compiled and
+/// type-checked; re-enabling is one line once a better-separated stage exists. Note
+/// that `assets/student.bin` is gitignored, so a deployment from git has no table to
+/// fetch even if this is flipped — regenerate and copy it first.
+const FETCH_STUDENT: bool = false;
+
 /// Fetches `student.bin` and installs it, then re-runs the query that needed it.
 ///
 /// Lazy on purpose. The table is ~8MB gzipped, it is consulted on roughly half of
@@ -378,7 +393,8 @@ pub fn Ask() -> impl IntoView {
         // A deferred abstain is exactly the case the student exists for, so this is
         // where the download is worth triggering — and nowhere else. Every other
         // query is answered without it, which is the point of loading lazily.
-        if matches!(route, Route::Abstain { deferred: true, .. })
+        if FETCH_STUDENT
+            && matches!(route, Route::Abstain { deferred: true, .. })
             && !pb_router::static_dense::is_installed()
         {
             load_student(loading, student_ready);
