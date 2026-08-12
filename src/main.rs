@@ -5,6 +5,7 @@ async fn main() -> std::io::Result<()> {
     use actix_web::*;
     use egonik_site::app::*;
     use egonik_site::database::connection::get_connection_pool;
+    use egonik_site::database::migrations::run_migrations;
     use egonik_site::entrypoint::application_state::AppState;
     use leptos::config::get_configuration;
     use leptos::prelude::*;
@@ -15,6 +16,11 @@ async fn main() -> std::io::Result<()> {
     let addr = conf.leptos_options.site_addr;
 
     let pool = get_connection_pool();
+    {
+        use anyhow::Context;
+        let mut conn = pool.get().unwrap();
+        run_migrations(&mut conn);
+    }
     let app_state = AppState::new(pool);
     HttpServer::new(move || {
     let routes = generate_route_list(App);

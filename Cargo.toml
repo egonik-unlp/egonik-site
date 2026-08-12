@@ -30,6 +30,7 @@ anyhow = "1.0.104"
 tokio = { version = "1.53.1", features = ["full"], optional = true }
 reqwest = { version = "0.13.4", features = ["json"], optional = true }
 futures-timer = { version = "3", features = ["wasm-bindgen"] }
+diesel_migrations = { version = "2.3.2", optional = true }
 [features]
 ssr = [
   "dep:actix-files",
@@ -38,6 +39,7 @@ ssr = [
   "dep:diesel",
   "dep:reqwest",
   "dep:tokio",
+  "dep:diesel_migrations",
   "dep:toml",
   "dep:serde_json",
   "leptos/ssr",
@@ -46,6 +48,7 @@ ssr = [
 ]
 csr = ["leptos/csr"]
 hydrate = ["leptos/hydrate"]
+diesel_migrations = ["dep:diesel_migrations"]
 
 # Defines a size-optimized profile for the WASM bundle in release mode
 [profile.wasm-release]

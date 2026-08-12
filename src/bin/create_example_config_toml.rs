@@ -28,7 +28,7 @@ fn main() -> anyhow::Result<()> {
         .create(true)
         .truncate(true)
         .write(true)
-        .open("example-config.toml")
+        .open("config.toml")
         .unwrap();
     outfile
         .write_all(body.as_bytes())

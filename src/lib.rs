@@ -1,3 +1,4 @@
+#![recursion_limit = "256"]
 #![allow(dead_code, unused, clippy::from_over_into)]
 
 pub mod app;
