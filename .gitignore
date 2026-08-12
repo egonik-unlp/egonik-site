@@ -18,3 +18,11 @@ Cargo.lock
 
 # Local config
 config.toml
+
+# The distilled router table, ~12MB, produced by project-black's distill.py and
+# rewritten wholesale on every run — reproducible, so not committed. It MUST be
+# present for the dense stage to work: without it /student.bin 404s and the router
+# silently degrades to lexical-only (a console warning is the only signal).
+#   uv run python src/router_train/distill.py     # in project-black
+#   cp ../snappler/project-black/crates/pb-router/student.bin assets/
+assets/student.bin

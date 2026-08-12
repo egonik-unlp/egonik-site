@@ -30,6 +30,25 @@ anyhow = "1.0.104"
 tokio = { version = "1.53.1", features = ["full"], optional = true }
 reqwest = { version = "0.13.4", features = ["json"], optional = true }
 futures-timer = { version = "3", features = ["wasm-bindgen"] }
+# The query router: BM25 + bilingual aliases over the site's own content, with the
+# index compiled in. Path dependency because project-black has no remote yet.
+# `student` enables the distilled dense stage: ~8MB gzipped, and it takes hard
+# Spanish queries from 4% to 21%. Drop the feature to ship the ~26KB lexical-only
+# router instead — see the trade-off note in project-black/README.md.
+pb-router = { path = "../snappler/project-black/crates/pb-router" }
+js-sys = "0.3"
+wasm-bindgen-futures = "0.4"
+web-sys = { version = "0.3", features = [
+  "console",
+  "Document",
+  "Response",
+  "Window",
+  "Element",
+  "HtmlElement",
+  "ScrollBehavior",
+  "ScrollIntoViewOptions",
+  "ScrollLogicalPosition",
+] }
 diesel_migrations = { version = "2.3.2", optional = true }
 [features]
 ssr = [

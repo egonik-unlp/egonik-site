@@ -1,9 +1,8 @@
+use crate::ask::components::Ask;
 use crate::personal_information::components::{Closing, Masthead};
 use crate::portfolio::components::PortfolioProjects;
-use crate::publications::components::PublicationsWithMetadata;
 use crate::ui::components::footer::SiteFooter;
 use crate::ui::components::nav::Rail;
-use crate::ui::components::toolkit::Toolkit;
 use leptos::prelude::*;
 use leptos_meta::{provide_meta_context, Link, Stylesheet, Title};
 use leptos_router::path;
@@ -56,15 +55,19 @@ pub fn App() -> impl IntoView {
     }
 }
 
-/// The landing page. The order is the argument: who, then the code, then the
-/// research it came out of, then the tools, then how to get in touch.
+/// The landing page: who, then one prompt over everything he has made, then how
+/// to get in touch.
+///
+/// `<Ask/>` replaces the three separate Code / Papers / Tools sections. It keeps
+/// their `#code`, `#papers` and `#tools` anchors on its own group headings, so the
+/// nav rail and every existing link still resolve — and it renders from the
+/// compiled-in router index, which is why this page no longer needs the
+/// `SsrMode::InOrder` workaround described on the route below.
 #[component]
 fn HomePage() -> impl IntoView {
     view! {
         <Masthead />
-        <PortfolioProjects />
-        <PublicationsWithMetadata />
-        <Toolkit />
+        <Ask />
         <Closing />
     }
 }

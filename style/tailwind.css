@@ -1260,6 +1260,391 @@
   }
 }
 
+/* ═══════════════════════════════════════════════════════════════════════════
+   Ask — the prompt that replaced the Code / Papers / Tools sections.
+
+   Filtering never adds or removes cards. Every card renders once and `.is-out`
+   collapses the ones that do not match, because a node that appears from nothing
+   has no state to transition from. `transition-behavior: allow-discrete` lets the
+   fade finish before `display` flips, and `@starting-style` gives the reverse
+   direction something to start from — so a filter reads as a settle, not a jump.
+
+   The reduced-motion block at the end of this file already zeroes every duration
+   with !important, so none of this needs a separate guard.
+   ═════════════════════════════════════════════════════════════════════════ */
+
+@layer components {
+  .ask-form {
+    display: grid;
+    grid-template-columns: 1fr auto auto;
+    gap: 0.5rem;
+    align-items: center;
+    margin-block: 1.5rem 0.75rem;
+  }
+
+  /* Visible to screen readers only: the placeholder and the heading already say
+     what the field is, so a second visible label would be noise. */
+  .ask-label {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+
+  .ask-input {
+    font-family: var(--font-body);
+    font-size: 1.0625rem;
+    inline-size: 100%;
+    padding: 0.7rem 0.9rem;
+    color: var(--color-ink);
+    background: var(--color-paper-2);
+    border: 1px solid var(--color-rule);
+    border-radius: 2px;
+    transition:
+      border-color 0.2s var(--ease-out-quart),
+      box-shadow 0.2s var(--ease-out-quart);
+  }
+
+  .ask-input::placeholder {
+    color: var(--color-muted);
+  }
+
+  .ask-input:focus-visible {
+    outline: none;
+    border-color: var(--color-pen);
+    box-shadow: 0 0 0 3px var(--color-pen-tint);
+  }
+
+  .ask-clear {
+    font-family: var(--font-mono);
+    font-size: 0.75rem;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--color-muted);
+    background: none;
+    border: 0;
+    padding: 0.5rem;
+    cursor: pointer;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.2s var(--ease-out-quart);
+  }
+
+  .ask-clear.is-shown {
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  .ask-clear:hover {
+    color: var(--color-pen);
+  }
+
+  /* The results panel: absent at rest, so the page is just a prompt. */
+  .ask-panel {
+    display: none;
+    opacity: 0;
+    transform: translateY(-4px);
+    transition:
+      opacity 0.28s var(--ease-out-quart),
+      transform 0.28s var(--ease-out-quart),
+      display 0.28s allow-discrete;
+  }
+
+  .ask-panel.is-shown {
+    display: block;
+    opacity: 1;
+    transform: none;
+  }
+
+  .ask-readout {
+    font-family: var(--font-mono);
+    font-size: 0.75rem;
+    letter-spacing: 0.02em;
+    line-height: 1.5;
+    color: var(--color-muted);
+    padding-block: 0.5rem;
+    margin: 0;
+  }
+
+  /* An abstain is not an error — the archive is still reachable. */
+  .ask-readout.is-abstain {
+    color: var(--color-ink-2);
+  }
+
+  /* The result list. Rows, not cards: this is the tool, and the cards are the
+     destination it points at. */
+  .ask-list {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    border-block-start: 1px solid var(--color-rule);
+  }
+
+  .ask-list-item {
+    border-block-end: 1px solid var(--color-rule);
+  }
+
+  .ask-hit {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 1rem;
+    inline-size: 100%;
+    padding: 0.7rem 0.25rem;
+    text-align: start;
+    background: none;
+    border: 0;
+    border-inline-start: 2px solid transparent;
+    cursor: pointer;
+    transition:
+      background 0.18s var(--ease-out-quart),
+      border-color 0.18s var(--ease-out-quart),
+      padding-inline-start 0.18s var(--ease-out-quart);
+  }
+
+  .ask-hit:hover {
+    background: var(--color-paper-2);
+    border-inline-start-color: var(--color-rule-strong);
+    padding-inline-start: 0.6rem;
+  }
+
+  .ask-hit:focus-visible {
+    outline: 2px solid var(--color-pen);
+    outline-offset: -2px;
+  }
+
+  /* The row whose item is currently open in context. */
+  .ask-hit.is-open {
+    border-inline-start-color: var(--color-pen);
+    background: var(--color-pen-wash);
+    padding-inline-start: 0.6rem;
+  }
+
+  .ask-hit-title {
+    font-family: var(--font-display);
+    font-size: 0.9375rem;
+    font-variation-settings: "wdth" 105;
+    color: var(--color-ink);
+  }
+
+  .ask-hit-where {
+    font-family: var(--font-mono);
+    font-size: 0.6875rem;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--color-muted);
+    white-space: nowrap;
+  }
+
+  .ask-card-out {
+    font-family: var(--font-mono);
+    font-size: 0.75rem;
+    margin-block-start: 0.25rem;
+  }
+
+  /* An abstain is not an error — the archive is still there. Muted rule rather
+     than a red one. */
+  .ask-readout.is-abstain {
+    border-left-color: var(--color-rule-strong);
+    color: var(--color-muted);
+  }
+
+  /* Groups are closed at rest: the tool shows nothing until asked. Present in the
+     DOM regardless, so the archive is still server-rendered and the reveal has
+     something to transition from. */
+  .ask-group {
+    display: none;
+    opacity: 0;
+    margin-block-start: 2.5rem;
+    transition:
+      opacity 0.32s var(--ease-out-quart),
+      display 0.32s allow-discrete;
+  }
+
+  .ask-group.is-open,
+  /* `:target` is what keeps the nav rail working with no JavaScript: linking to
+     #code / #papers / #tools opens that group on its own. */
+  .ask-group:target {
+    display: block;
+    opacity: 1;
+  }
+
+  /* Anything the rail opens shows its whole section, since no query has narrowed
+     it — the `.is-out` cards have nothing to hide from. */
+  .ask-group:target .ask-card {
+    display: flex;
+    opacity: 1;
+    transform: none;
+  }
+
+  /* Navigating to #code / #papers / #tools focuses the group, since it carries
+     tabindex="-1". A full outline around a whole section reads as an error state
+     rather than "you landed here", so the arrival is marked in the margin instead —
+     the same vermilion rule the rest of the page uses for a working annotation. */
+  .ask-group:focus-visible {
+    outline: none;
+    border-inline-start: 2px solid var(--color-pen);
+    padding-inline-start: 1rem;
+    margin-inline-start: -1rem;
+  }
+
+  .ask.is-active .ask-list-item {
+    animation: ask-row-in 0.26s var(--ease-out-quart) backwards;
+    animation-delay: calc(min(var(--i, 0), 10) * 22ms);
+  }
+
+  @keyframes ask-row-in {
+    from {
+      opacity: 0;
+      transform: translateY(-3px);
+    }
+  }
+
+  .ask-group-name {
+    font-family: var(--font-display);
+    font-size: 0.875rem;
+    font-variation-settings: "wdth" 112;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--color-ink-2);
+    display: flex;
+    align-items: baseline;
+    gap: 0.6rem;
+    padding-block-end: 0.6rem;
+    border-block-end: 1px solid var(--color-rule);
+    margin-block-end: 1.25rem;
+  }
+
+  .ask-group-count {
+    font-family: var(--font-mono);
+    font-size: 0.75rem;
+    color: var(--color-muted);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .ask-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(min(100%, 20rem), 1fr));
+    gap: 1rem;
+    list-style: none;
+    padding: 0;
+    margin: 0;
+  }
+
+  .ask-card {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    padding: 1rem 1.1rem;
+    background: var(--color-surface);
+    border: 1px solid var(--color-rule);
+    border-left: 2px solid transparent;
+    border-radius: 2px;
+    transition:
+      opacity 0.3s var(--ease-out-quart),
+      transform 0.3s var(--ease-out-quart),
+      border-color 0.24s var(--ease-out-quart),
+      background 0.24s var(--ease-out-quart),
+      display 0.3s allow-discrete;
+  }
+
+  /* The stagger only exists once the visitor has asked something. Capped at 12 so
+     a long group settles rather than crawls. */
+  .ask.is-querying .ask-card {
+    transition-delay: calc(min(var(--i, 0), 12) * 16ms);
+  }
+
+  .ask-card:focus-visible {
+    outline: 2px solid var(--color-pen);
+    outline-offset: 2px;
+  }
+
+  .ask-card.is-out {
+    display: none;
+    opacity: 0;
+    transform: translateY(-6px) scale(0.97);
+  }
+
+  /* The card the router actually chose. */
+  .ask-card.is-hit {
+    border-left-color: var(--color-pen);
+    background: var(--color-pen-wash);
+    transform: translateY(-2px);
+  }
+
+  .ask-card-title {
+    font-family: var(--font-display);
+    font-size: 1.0625rem;
+    font-variation-settings: "wdth" 108;
+    font-weight: 500;
+    line-height: 1.25;
+    color: var(--color-ink);
+  }
+
+  /* A title must not change weight or colour depending on whether the item
+     happens to have an external link — otherwise the one paper without a DOI
+     reads as the emphasised one. Two classes, so this beats `.work-link`. */
+  .ask-card-title .work-link,
+  .ask-card-title span {
+    color: inherit;
+    text-decoration: none;
+    border-block-end: 1px solid transparent;
+    transition:
+      color 0.18s var(--ease-out-quart),
+      border-color 0.18s var(--ease-out-quart);
+  }
+
+  .ask-card-title .work-link:hover,
+  .ask-card-title .work-link:focus-visible {
+    color: var(--color-pen);
+    border-block-end-color: var(--color-pen);
+  }
+
+  .ask-card-blurb {
+    font-size: 0.9375rem;
+    line-height: 1.55;
+    color: var(--color-ink-2);
+    margin: 0;
+  }
+
+  .ask-badges {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.35rem;
+    list-style: none;
+    padding: 0;
+    margin-block-start: auto;
+  }
+
+  @media (max-width: 40rem) {
+    .ask-form {
+      grid-template-columns: 1fr auto;
+    }
+    .ask-clear {
+      grid-column: 1 / -1;
+      justify-self: start;
+    }
+  }
+}
+
+/* Entry state for cards returning to view.
+   Scoped to `.is-querying` on purpose: `@starting-style` also fires on an
+   element's FIRST render, so without that gate the entire server-rendered archive
+   fades in on page load — 53 cards arriving late, and a screenshot or an early
+   paint catching a blank page. Gated, first paint is instant and only cards
+   returning from a filter animate. `:not(.is-out)` keeps it to the appearing
+   direction. */
+@starting-style {
+  .ask.is-querying .ask-card:not(.is-out) {
+    opacity: 0;
+    transform: translateY(8px) scale(0.98);
+  }
+}
+
+
 @media (prefers-reduced-motion: reduce) {
   html {
     scroll-behavior: auto;
