@@ -1,3 +1,7 @@
+// Still not built, this part of the project builds
+// a Random-walk based animation possibly for the background
+// in some section
+
 pub struct Generator {
     pub x: u8,
     pub y: u8,

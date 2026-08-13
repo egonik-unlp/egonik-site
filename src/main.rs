@@ -23,6 +23,8 @@ async fn main() -> std::io::Result<()> {
     }
     let app_state = AppState::new(pool);
     HttpServer::new(move || {
+        use std::fmt::format;
+
     let routes = generate_route_list(App);
         // Generate the list of routes in your Leptos App
         let leptos_options = &conf.leptos_options;
@@ -37,6 +39,13 @@ async fn main() -> std::io::Result<()> {
             .service(Files::new("/assets", &site_root))
             .service(Files::new("/fonts", format!("{}/fonts", &site_root)))
             .service(Files::new("/js", format!("{}/js", &site_root)))
+            // standalone slide deck; redirect_to_slash is required so the deck's
+            // relative asset paths resolve against /presentation/ and not /
+            .service(
+                Files::new("/presentation", format!("{}/presentation", &site_root))
+                    .index_file("index.html")
+                    .redirect_to_slash_directory(),
+            )
             // serve the favicon from /favicon.ico
             .service(favicon)
             .leptos_routes(routes, {
