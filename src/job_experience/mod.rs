@@ -6,3 +6,6 @@ pub mod model;
 pub mod repository;
 #[cfg(feature = "ssr")]
 pub mod service;
+
+#[cfg(feature = "ssr")]
+pub mod jobs_schema;

@@ -31,6 +31,8 @@ tokio = { version = "1.53.1", features = ["full"], optional = true }
 reqwest = { version = "0.13.4", features = ["json"], optional = true }
 futures-timer = { version = "3", features = ["wasm-bindgen"] }
 diesel_migrations = { version = "2.3.2", optional = true }
+json-schema-rs = "0.0.6"
+json-schema-rs-macro = "0.0.6"
 [features]
 ssr = [
   "dep:actix-files",
